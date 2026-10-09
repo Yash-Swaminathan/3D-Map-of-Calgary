@@ -8,7 +8,7 @@ const LoginContainer = styled.div`
   justify-content: center;
   align-items: center;
   height: 100vh;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  background: #edf1f2;
 `;
 
 const LoginCard = styled.div`
@@ -71,7 +71,7 @@ const Input = styled.input`
 const LoginButton = styled.button`
   width: 100%;
   padding: 12px 24px;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  background: #edf1f2;
   color: white;
   border: none;
   border-radius: 8px;
@@ -126,24 +126,18 @@ function UserIdentityForm({ onLogin }) {
                 toast.error(response.data.error || 'Login failed');
             }
         } catch (error) {
-            // Error handling is done by the API client interceptor
+            toast.error(error.message);
         } finally {
             setIsLoading(false);
-        }
-    };
-
-    const handleKeyPress = (e) => {
-        if (e.key === 'Enter') {
-            handleSubmit(e);
         }
     };
 
     return (
         <LoginContainer>
             <LoginCard>
-                <Title>Welcome to Calgary Urban Intelligence Dashboard</Title>
+                <Title>Keep your study projects</Title>
                 <Subtitle>
-                    Explore Calgary's buildings in 3D and query them using natural language
+                    Choose a name to save and revisit your filters. This prototype uses names for identification, without passwords.
                 </Subtitle>
 
                 <form onSubmit={handleSubmit}>
@@ -154,7 +148,6 @@ function UserIdentityForm({ onLogin }) {
                             type="text"
                             value={username}
                             onChange={(e) => setUsername(e.target.value)}
-                            onKeyPress={handleKeyPress}
                             placeholder="e.g., John Doe"
                             disabled={isLoading}
                             autoFocus
@@ -162,7 +155,7 @@ function UserIdentityForm({ onLogin }) {
                     </InputGroup>
 
                     <LoginButton type="submit" disabled={isLoading}>
-                        {isLoading ? 'Signing in...' : 'Start Exploring'}
+                        {isLoading ? 'Signing in...' : 'Continue to projects'}
                     </LoginButton>
                 </form>
 

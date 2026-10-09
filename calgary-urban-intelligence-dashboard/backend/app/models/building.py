@@ -18,7 +18,7 @@ class Building(db.Model):
     footprint_coords = db.Column(db.Text)  # JSON string of polygon coordinates
     
     # Building characteristics
-    height = db.Column(db.Float)  # Height in feet/meters
+    height = db.Column(db.Float)  # Height in meters
     floors = db.Column(db.Integer)
     building_type = db.Column(db.String(100))  # Residential, Commercial, Industrial, etc.
     
@@ -27,6 +27,18 @@ class Building(db.Model):
     assessed_value = db.Column(db.Float)  # Property assessment value
     land_use = db.Column(db.String(100))
     
+    details_record = db.relationship('BuildingDetails', uselist=False, cascade='all, delete-orphan')
+
+    @property
+    def details(self):
+        return json.loads(self.details_record.data_json) if self.details_record else {}
+
+    @details.setter
+    def details(self, value):
+        if self.details_record is None:
+            self.details_record = BuildingDetails()
+        self.details_record.data_json = json.dumps(value)
+
     # Additional metadata
     last_updated = db.Column(db.DateTime)
     
@@ -57,6 +69,7 @@ class Building(db.Model):
     def to_dict(self):
         """Convert building to dictionary for JSON serialization"""
         return {
+            **self.details,
             'id': self.id,
             'building_id': self.building_id,
             'address': self.address,
@@ -73,58 +86,37 @@ class Building(db.Model):
         }
     
     def matches_filter(self, filter_criteria):
-        """Check if building matches the given filter criteria"""
-        try:
-            # Height filters - support both old and new format
-            min_height = filter_criteria.get('min_height') or filter_criteria.get('height_min')
-            max_height = filter_criteria.get('max_height') or filter_criteria.get('height_max')
-            
-            if min_height and (not self.height or self.height < min_height):
+        """Apply the same criteria to live queries and saved projects; unknowns do not match."""
+        def normalized(value):
+            return str(value or '').lower().replace('_', ' ').replace('-', ' ').strip()
+
+        for field, kind in [('height', 'height'), ('floors', 'floors'), ('assessed_value', 'value')]:
+            value = getattr(self, field)
+            low = filter_criteria.get(f'{kind}_min', filter_criteria.get(f'min_{kind}'))
+            high = filter_criteria.get(f'{kind}_max', filter_criteria.get(f'max_{kind}'))
+            if low is not None and (value is None or value < low):
                 return False
-            if max_height and (not self.height or self.height > max_height):
+            if high is not None and (value is None or value > high):
                 return False
-            
-            # Floors filters - support both old and new format
-            min_floors = filter_criteria.get('min_floors') or filter_criteria.get('floors_min')
-            max_floors = filter_criteria.get('max_floors') or filter_criteria.get('floors_max')
-            
-            if min_floors and (not self.floors or self.floors < min_floors):
+        for field, plural in [('building_type', 'building_types'), ('zoning', 'zoning_types')]:
+            choices = filter_criteria.get(plural, [])
+            if field in filter_criteria:
+                choices = [filter_criteria[field]]
+            if choices and normalized(getattr(self, field)) not in {normalized(v) for v in choices}:
                 return False
-            if max_floors and (not self.floors or self.floors > max_floors):
-                return False
-            
-            # Building type filter - support both old and new format
-            building_types = filter_criteria.get('building_types', [])
-            building_type = filter_criteria.get('building_type')
-            
-            # If single building_type specified, convert to list for compatibility
-            if building_type:
-                building_types = [building_type]
-            
-            if building_types and self.building_type and self.building_type.lower() not in [bt.lower() for bt in building_types]:
-                return False
-            
-            # Zoning filter - support both old and new format
-            zoning_types = filter_criteria.get('zoning_types', [])
-            zoning = filter_criteria.get('zoning')
-            
-            # If single zoning specified, convert to list for compatibility  
-            if zoning:
-                zoning_types = [zoning]
-            
-            if zoning_types and self.zoning and self.zoning.upper() not in [zt.upper() for zt in zoning_types]:
-                return False
-            
-            # Assessment value filters - support both old and new format
-            min_value = filter_criteria.get('min_value') or filter_criteria.get('value_min')
-            max_value = filter_criteria.get('max_value') or filter_criteria.get('value_max')
-            
-            if min_value and (not self.assessed_value or self.assessed_value < min_value):
-                return False
-            if max_value and (not self.assessed_value or self.assessed_value > max_value):
-                return False
-            
-            return True
-            
-        except Exception as e:
-            return False 
+        return True
+
+
+class BuildingDetails(db.Model):
+    """Additional provenance and source attributes without changing existing building columns."""
+    __tablename__ = 'building_details'
+    building_id = db.Column(db.Integer, db.ForeignKey('buildings.id'), primary_key=True)
+    data_json = db.Column(db.Text, nullable=False, default='{}')
+
+
+class CachedArea(db.Model):
+    """Record which exact bounded areas were fetched, including empty results."""
+    __tablename__ = 'cached_areas'
+    bounds_key = db.Column(db.String(160), primary_key=True)
+    fetched_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    warnings_json = db.Column(db.Text, nullable=False, default='[]')

@@ -2,16 +2,9 @@
   "short_name": "Calgary Urban Intelligence",
   "name": "Calgary Urban Intelligence Dashboard",
   "description": "Explore Calgary buildings in 3D with real open data and natural language queries",
-  "icons": [
-    {
-      "src": "favicon.ico",
-      "sizes": "64x64 32x32 24x24 16x16",
-      "type": "image/x-icon"
-    }
-  ],
+  "icons": [],
   "start_url": ".",
   "display": "standalone",
-  "theme_color": "#667eea",
-  "background_color": "#667eea",
-  "orientation": "landscape-primary"
-} 
+  "theme_color": "#193f4b",
+  "background_color": "#edf1f2"
+}

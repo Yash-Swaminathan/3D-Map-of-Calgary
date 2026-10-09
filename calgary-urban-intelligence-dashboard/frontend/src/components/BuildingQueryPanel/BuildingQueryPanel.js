@@ -1,14 +1,16 @@
+import { formatFilters } from '../../utils/formatFilters';
 import React, { useState, useEffect } from 'react';
 import styled from 'styled-components';
 import { apiService } from '../../services/dashboardApi';
 
 const Container = styled.div`
-  padding: 20px;
+  padding: 24px;
   display: flex;
   flex-direction: column;
-  height: 100%;
+  flex: 1;
+  min-height: 300px;
   background: white;
-  overflow: hidden;
+  overflow: visible;
 `;
 
 const Section = styled.div`
@@ -74,7 +76,7 @@ const Button = styled.button`
 `;
 
 const SubmitButton = styled(Button)`
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  background: #193f4b;
   color: white;
 
   &:hover:not(:disabled) {
@@ -98,12 +100,6 @@ const StatusSection = styled.div`
   border-radius: 8px;
   margin-bottom: 15px;
   font-size: 14px;
-`;
-
-const SuccessStatus = styled(StatusSection)`
-  background: rgba(40, 167, 69, 0.1);
-  border: 1px solid rgba(40, 167, 69, 0.2);
-  color: #155724;
 `;
 
 const ErrorStatus = styled(StatusSection)`
@@ -202,7 +198,11 @@ const SuggestionList = styled.ul`
   list-style: none;
 `;
 
-const SuggestionItem = styled.li`
+const SuggestionItem = styled.button`
+  width: 100%;
+  text-align: left;
+  border: 1px solid #e6ecee;
+  font-family: inherit;
   padding: 8px 12px;
   background: #f8f9fa;
   border-radius: 4px;
@@ -269,6 +269,7 @@ function BuildingQueryPanel({
   };
 
   const handleSuggestionClick = (suggestion) => {
+    if (isLoading) return;
     setQuery(suggestion);
     onQuerySubmit(suggestion);
   };
@@ -278,31 +279,16 @@ function BuildingQueryPanel({
     onClearFilters();
   };
 
-  const formatFilterText = (filters) => {
-    if (!filters) return '';
-    
-    const { attribute, operator, value } = filters;
-    const operatorText = {
-      '>': 'greater than',
-      '<': 'less than',
-      '=': 'equal to',
-      '>=': 'greater than or equal to',
-      '<=': 'less than or equal to',
-      'contains': 'containing'
-    };
-
-    return `${attribute} ${operatorText[operator] || operator} ${value}`;
-  };
-
   return (
     <Container>
       <Section>
-        <SectionTitle>Query Buildings</SectionTitle>
+        <SectionTitle>Ask the city data</SectionTitle>
         <QueryForm onSubmit={handleSubmit}>
           <QueryInput
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Ask about buildings in natural language...&#10;Examples:&#10;• buildings over 100 feet&#10;• commercial buildings&#10;• buildings worth less than $500,000"
+            aria-label="Building question"
+            placeholder="e.g. Commercial buildings over 30 meters"
             disabled={isLoading}
           />
           <ButtonGroup>
@@ -329,7 +315,7 @@ function BuildingQueryPanel({
 
       {error && (
         <ErrorStatus>
-          <strong>Error:</strong> {error}
+          <strong role="alert">Error:</strong> {error}
         </ErrorStatus>
       )}
 
@@ -337,13 +323,13 @@ function BuildingQueryPanel({
         <Section>
           <ActiveFilters>
             <FilterText>Active Filter:</FilterText>
-            <FilterDetails>{formatFilterText(activeFilters)}</FilterDetails>
+            <FilterDetails>{formatFilters(activeFilters)}</FilterDetails>
           </ActiveFilters>
         </Section>
       )}
 
       <SuggestionsSection>
-        <SectionTitle>Query Examples</SectionTitle>
+        <SectionTitle>Try a question</SectionTitle>
         <SuggestionsContainer>
           {suggestions.map((category, index) => (
             <SuggestionCategory key={index}>
@@ -351,6 +337,8 @@ function BuildingQueryPanel({
               <SuggestionList>
                 {category.examples.map((example, exampleIndex) => (
                   <SuggestionItem
+                    type="button"
+                    disabled={isLoading}
                     key={exampleIndex}
                     onClick={() => handleSuggestionClick(example)}
                   >

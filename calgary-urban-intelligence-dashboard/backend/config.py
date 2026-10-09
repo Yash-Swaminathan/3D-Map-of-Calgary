@@ -8,6 +8,7 @@ class Config:
     SECRET_KEY = os.environ.get('SECRET_KEY') or 'dev-secret-key-change-in-production'
     SQLALCHEMY_DATABASE_URI = os.environ.get('DATABASE_URL') or 'sqlite:///urban_dashboard.db'
     SQLALCHEMY_TRACK_MODIFICATIONS = False
+    ENABLE_LOCAL_LLM = os.environ.get('ENABLE_LOCAL_LLM', 'false').lower() == 'true'
     
 
     
@@ -17,7 +18,9 @@ class Config:
     CALGARY_DEVELOPER_TOKEN = os.environ.get('CALGARY_DEVELOPER_TOKEN')  # Calgary's native developer token
     
     # CORS Configuration
-    CORS_ORIGINS = ['http://localhost:3000', 'https://localhost:3000']
+    CORS_ORIGINS = [origin.strip() for origin in os.environ.get(
+        'CORS_ORIGINS', 'http://localhost:3000,http://localhost:3006,http://127.0.0.1:3006'
+    ).split(',') if origin.strip()]
 
 class DevelopmentConfig(Config):
     """Development configuration"""

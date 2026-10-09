@@ -1,76 +1,76 @@
+from app import db
 from flask import Blueprint, jsonify, request, current_app
+from werkzeug.exceptions import HTTPException
 from app.services.calgary_data_fetcher import CalgaryDataFetcher
 from app.services.building_processor import BuildingProcessor
 from app.models.building import Building
+from app.utils.validation import validate_bounds, validate_filters
 
 buildings_bp = Blueprint('buildings', __name__)
 
 @buildings_bp.route('/area', methods=['GET'])
 def get_buildings_in_area():
-    """Get buildings within a specified area using intelligent combined data sources"""
+    """Fetch/cache the requested area rather than checking whether any city data exists."""
+    import json
+    from datetime import datetime
+    from app import db
+    from app.models.building import CachedArea
     try:
-        # Parse query parameters
-        bounds_str = request.args.get('bounds')
+        bounds = validate_bounds(request.args.get('bounds'))
         refresh = request.args.get('refresh', 'false').lower() == 'true'
-        # Always use combined intelligent data source
-        
-        if not bounds_str:
-            return jsonify({'error': 'bounds parameter is required (format: lat_min,lng_min,lat_max,lng_max)'}), 400
-        
-        try:
-            bounds = [float(x) for x in bounds_str.split(',')]
-            if len(bounds) != 4:
-                raise ValueError("Invalid bounds format")
-        except ValueError:
-            return jsonify({'error': 'Invalid bounds format. Use: lat_min,lng_min,lat_max,lng_max'}), 400
-        
-        # Initialize services
-        fetcher = CalgaryDataFetcher()
+        key = ','.join(str(v) for v in bounds)
+        area = db.session.get(CachedArea, key)
         processor = BuildingProcessor()
-        
-        # Check if we should refresh data or use cached data
-        if refresh or Building.query.count() == 0:
-            # Always use intelligent combined data source
-            raw_data = fetcher.fetch_combined_building_data(bounds=tuple(bounds))
-            
-            if raw_data:
-                # Process and store buildings
-                buildings = processor.process_and_store_buildings(raw_data)
-            else:
-                return jsonify({'error': 'Failed to fetch building data'}), 500
-        else:
-            # Use cached data from database
-            buildings = processor.get_buildings_in_bounds(tuple(bounds))
-        
-        # Convert to JSON
-        buildings_json = [building.to_dict() for building in buildings]
-        
-        # Get statistics
-        stats = processor.get_building_statistics(buildings)
-        
+        fresh = refresh or area is None
+        if fresh:
+            fetcher = CalgaryDataFetcher()
+            raw_data = fetcher.fetch_combined_building_data(bounds=bounds)
+            if not raw_data and fetcher.warnings:
+                return jsonify({'error': 'Building sources are unavailable. Try again shortly.',
+                                'warnings': fetcher.warnings}), 502
+            # Replace this area's rows only after an upstream fetch succeeds.
+            for old_building in processor.get_buildings_in_bounds(bounds):
+                db.session.delete(old_building)
+            db.session.flush()
+            stored = processor.process_and_store_buildings(raw_data)
+            if raw_data and not stored:
+                return jsonify({'error': 'Could not store the fetched buildings.'}), 500
+            if area is None:
+                area = CachedArea(bounds_key=key)
+                db.session.add(area)
+            area.fetched_at = datetime.utcnow()
+            area.warnings_json = json.dumps(fetcher.warnings)
+            db.session.commit()
+        buildings = processor.get_buildings_in_bounds(bounds)
         return jsonify({
-            'success': True,
-            'buildings': buildings_json,
-            'statistics': stats,
-            'bounds': bounds,
-            'data_source': 'combined_intelligent',
-            'cache_status': 'fresh' if refresh else 'cached'
+            'success': True, 'buildings': [b.to_dict() for b in buildings],
+            'statistics': processor.get_building_statistics(buildings), 'bounds': bounds,
+            'data_source': 'calgary_open_data_and_openstreetmap',
+            'cache_status': 'fresh' if fresh else 'cached',
+            'fetched_at': area.fetched_at.isoformat(), 'warnings': json.loads(area.warnings_json),
         })
-        
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
+    except ValueError as error:
+        return jsonify({'error': str(error)}), 400
+    except Exception:
+        db.session.rollback()
+        current_app.logger.exception('Building area request failed')
+        return jsonify({'error': 'Could not load this area.'}), 500
 
 @buildings_bp.route('/<int:building_id>', methods=['GET'])
 def get_building_details(building_id):
     """Get detailed information about a specific building"""
     try:
-        building = Building.query.get_or_404(building_id)
+        building = db.get_or_404(Building, building_id)
         
         return jsonify({
             'success': True,
             'building': building.to_dict()
         })
         
+    except HTTPException:
+        raise
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 400
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
@@ -82,8 +82,8 @@ def filter_buildings():
         if not data:
             return jsonify({'error': 'Request body is required'}), 400
         
-        filter_criteria = data.get('filters')
-        bounds = data.get('bounds')
+        filter_criteria = validate_filters(data.get('filters'))
+        bounds = validate_bounds(data['bounds']) if data.get('bounds') is not None else None
         
         if not filter_criteria:
             return jsonify({'error': 'filters parameter is required'}), 400
@@ -113,6 +113,10 @@ def filter_buildings():
             'total_matched': len(filtered_buildings)
         })
         
+    except HTTPException:
+        raise
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 400
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
@@ -121,7 +125,7 @@ def refresh_building_data():
     """Force refresh of building data from Calgary Open Data API"""
     try:
         data = request.get_json() or {}
-        bounds = data.get('bounds')
+        bounds = validate_bounds(data['bounds']) if data.get('bounds') is not None else None
         
         # Initialize services
         fetcher = CalgaryDataFetcher()
@@ -129,9 +133,9 @@ def refresh_building_data():
         
         # Fetch fresh data
         if bounds and len(bounds) == 4:
-            raw_data = fetcher.fetch_building_footprints(bounds=tuple(bounds))
+            raw_data = fetcher.fetch_combined_building_data(bounds=tuple(bounds))
         else:
-            raw_data = fetcher.fetch_building_footprints()
+            raw_data = fetcher.fetch_combined_building_data()
         
         if not raw_data:
             return jsonify({'error': 'Failed to fetch building data from API'}), 500
@@ -145,6 +149,10 @@ def refresh_building_data():
             'buildings_count': len(buildings)
         })
         
+    except HTTPException:
+        raise
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 400
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
@@ -158,7 +166,7 @@ def get_zoning_data():
         
         if bounds_str:
             try:
-                bounds = [float(x) for x in bounds_str.split(',')]
+                bounds = validate_bounds(bounds_str)
                 if len(bounds) != 4:
                     raise ValueError("Invalid bounds format")
                 bounds = tuple(bounds)
@@ -178,6 +186,10 @@ def get_zoning_data():
             'count': len(zoning_data)
         })
         
+    except HTTPException:
+        raise
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 400
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
@@ -193,7 +205,7 @@ def get_3d_buildings():
         
         if bounds_str:
             try:
-                bounds = [float(x) for x in bounds_str.split(',')]
+                bounds = validate_bounds(bounds_str)
                 if len(bounds) != 4:
                     raise ValueError("Invalid bounds format")
                 bounds = tuple(bounds)
@@ -213,6 +225,10 @@ def get_3d_buildings():
             'count': len(buildings_3d)
         })
         
+    except HTTPException:
+        raise
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 400
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
@@ -226,7 +242,7 @@ def get_osm_buildings():
         
         if bounds_str:
             try:
-                bounds = [float(x) for x in bounds_str.split(',')]
+                bounds = validate_bounds(bounds_str)
                 if len(bounds) != 4:
                     raise ValueError("Invalid bounds format")
                 bounds = tuple(bounds)
@@ -247,6 +263,10 @@ def get_osm_buildings():
             'data_source': 'openstreetmap'
         })
         
+    except HTTPException:
+        raise
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 400
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
@@ -261,7 +281,7 @@ def get_building_statistics():
         # Get buildings (either all or within bounds)
         if bounds_str:
             try:
-                bounds = [float(x) for x in bounds_str.split(',')]
+                bounds = validate_bounds(bounds_str)
                 if len(bounds) == 4:
                     buildings = processor.get_buildings_in_bounds(tuple(bounds))
                 else:
@@ -279,6 +299,10 @@ def get_building_statistics():
             'statistics': stats
         })
         
+    except HTTPException:
+        raise
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 400
     except Exception as e:
         return jsonify({'error': str(e)}), 500 
 
@@ -451,6 +475,10 @@ def debug_calgary_fields():
             }
         })
         
+    except HTTPException:
+        raise
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 400
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
 
@@ -464,7 +492,7 @@ def get_building_permits():
         
         if bounds_str:
             try:
-                bounds = [float(x) for x in bounds_str.split(',')]
+                bounds = validate_bounds(bounds_str)
                 if len(bounds) != 4:
                     raise ValueError("Invalid bounds format")
                 bounds = tuple(bounds)
@@ -484,6 +512,10 @@ def get_building_permits():
             'count': len(permits_data)
         })
         
+    except HTTPException:
+        raise
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 400
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
@@ -498,7 +530,7 @@ def get_property_assessments():
         
         if bounds_str:
             try:
-                bounds = [float(x) for x in bounds_str.split(',')]
+                bounds = validate_bounds(bounds_str)
                 if len(bounds) != 4:
                     raise ValueError("Invalid bounds format")
                 bounds = tuple(bounds)
@@ -532,5 +564,9 @@ def get_property_assessments():
             'value_stats': stats
         })
         
+    except HTTPException:
+        raise
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 400
     except Exception as e:
         return jsonify({'error': str(e)}), 500 

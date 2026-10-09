@@ -1,4 +1,5 @@
-import React, { useState, useEffect } from 'react';
+import { formatFilters } from '../../utils/formatFilters';
+import React, { useState, useEffect, useCallback } from 'react';
 import styled from 'styled-components';
 import toast from 'react-hot-toast';
 import { apiService } from '../../services/dashboardApi';
@@ -91,8 +92,8 @@ const Tab = styled.button`
   font-size: 16px;
   font-weight: 500;
   cursor: pointer;
-  color: ${props => props.active ? '#667eea' : '#666'};
-  border-bottom: 2px solid ${props => props.active ? '#667eea' : 'transparent'};
+  color: ${props => props.$active ? '#667eea' : '#666'};
+  border-bottom: 2px solid ${props => props.$active ? '#667eea' : 'transparent'};
   transition: all 0.3s ease;
 
   &:hover {
@@ -101,7 +102,7 @@ const Tab = styled.button`
 `;
 
 const TabContent = styled.div`
-  display: ${props => props.active ? 'block' : 'none'};
+  display: ${props => props.$active ? 'block' : 'none'};
 `;
 
 const SaveForm = styled.form`
@@ -177,7 +178,7 @@ const Button = styled.button`
 `;
 
 const SaveButton = styled(Button)`
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  background: #193f4b;
   color: white;
 
   &:hover:not(:disabled) {
@@ -294,6 +295,11 @@ const StatusMessage = styled.div`
 `;
 
 function SavedProjectsPanel({ user, activeFilters, onClose, onSaveProject, onLoadProject }) {
+  useEffect(() => {
+    const closeOnEscape = event => { if (event.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', closeOnEscape);
+    return () => window.removeEventListener('keydown', closeOnEscape);
+  }, [onClose]);
   const [activeTab, setActiveTab] = useState('load');
   const [projects, setProjects] = useState([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -303,13 +309,7 @@ function SavedProjectsPanel({ user, activeFilters, onClose, onSaveProject, onLoa
     description: ''
   });
 
-  useEffect(() => {
-    if (user) {
-      loadUserProjects();
-    }
-  }, [user]);
-
-  const loadUserProjects = async () => {
+  const loadUserProjects = useCallback(async () => {
     setIsLoading(true);
     setError(null);
     
@@ -325,7 +325,11 @@ function SavedProjectsPanel({ user, activeFilters, onClose, onSaveProject, onLoa
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [user]);
+
+  useEffect(() => {
+    if (user) loadUserProjects();
+  }, [user, loadUserProjects]);
 
   const handleSaveSubmit = async (e) => {
     e.preventDefault();
@@ -343,7 +347,7 @@ function SavedProjectsPanel({ user, activeFilters, onClose, onSaveProject, onLoa
     setIsLoading(true);
     
     try {
-      const project = await onSaveProject({
+      await onSaveProject({
         name: saveForm.name.trim(),
         description: saveForm.description.trim()
       });
@@ -353,7 +357,8 @@ function SavedProjectsPanel({ user, activeFilters, onClose, onSaveProject, onLoa
       setActiveTab('load');
       await loadUserProjects(); // Refresh the projects list
     } catch (err) {
-      // Error handling is done in the parent component
+      setError(err.message);
+      toast.error(err.message);
     } finally {
       setIsLoading(false);
     }
@@ -400,12 +405,6 @@ function SavedProjectsPanel({ user, activeFilters, onClose, onSaveProject, onLoa
     });
   };
 
-  const formatFilterPreview = (filters) => {
-    if (!filters) return 'No filters';
-    const { attribute, operator, value } = filters;
-    return `${attribute} ${operator} ${value}`;
-  };
-
   const handleOverlayClick = (e) => {
     if (e.target === e.currentTarget) {
       onClose();
@@ -413,21 +412,21 @@ function SavedProjectsPanel({ user, activeFilters, onClose, onSaveProject, onLoa
   };
 
   return (
-    <ManagerOverlay onClick={handleOverlayClick}>
+    <ManagerOverlay onClick={handleOverlayClick} role="dialog" aria-modal="true" aria-label="Saved projects">
       <ManagerContent>
-        <CloseButton onClick={onClose}>×</CloseButton>
+        <CloseButton aria-label="Close saved projects" onClick={onClose}>×</CloseButton>
         
-        <Title>Project Manager</Title>
+        <Title>Saved projects</Title>
 
         <TabContainer>
           <Tab 
-            active={activeTab === 'load'} 
+            $active={activeTab === 'load'}
             onClick={() => setActiveTab('load')}
           >
             Load Projects
           </Tab>
           <Tab 
-            active={activeTab === 'save'} 
+            $active={activeTab === 'save'}
             onClick={() => setActiveTab('save')}
           >
             Save Current Analysis
@@ -440,7 +439,7 @@ function SavedProjectsPanel({ user, activeFilters, onClose, onSaveProject, onLoa
           </StatusMessage>
         )}
 
-        <TabContent active={activeTab === 'load'}>
+        <TabContent $active={activeTab === 'load'}>
           {isLoading ? (
             <div style={{ textAlign: 'center', padding: '20px' }}>
               Loading projects...
@@ -483,7 +482,7 @@ function SavedProjectsPanel({ user, activeFilters, onClose, onSaveProject, onLoa
                   )}
                   
                   <FilterPreview>
-                    <strong>Filters:</strong> {formatFilterPreview(project.filters)}
+                    <strong>Filters:</strong> {formatFilters(project.filters)}
                   </FilterPreview>
                   
                   <ProjectMeta>
@@ -496,7 +495,7 @@ function SavedProjectsPanel({ user, activeFilters, onClose, onSaveProject, onLoa
           )}
         </TabContent>
 
-        <TabContent active={activeTab === 'save'}>
+        <TabContent $active={activeTab === 'save'}>
           {!activeFilters ? (
             <StatusMessage $type="error">
               No active filters to save. Please apply some filters first using the query interface.
@@ -505,7 +504,7 @@ function SavedProjectsPanel({ user, activeFilters, onClose, onSaveProject, onLoa
             <>
               <div style={{ marginBottom: '20px', padding: '15px', background: '#f8f9fa', borderRadius: '8px' }}>
                 <strong>Current Filters:</strong><br />
-                <small>{formatFilterPreview(activeFilters)}</small>
+                <small>{formatFilters(activeFilters)}</small>
               </div>
               
               <SaveForm onSubmit={handleSaveSubmit}>

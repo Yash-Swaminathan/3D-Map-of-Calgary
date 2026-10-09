@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import styled from 'styled-components';
 
 const PopupOverlay = styled.div`
@@ -153,6 +153,11 @@ const CoordinateText = styled.div`
 `;
 
 function BuildingDetailsPanel({ building, onClose }) {
+    useEffect(() => {
+        const closeOnEscape = event => { if (event.key === 'Escape') onClose(); };
+        window.addEventListener('keydown', closeOnEscape);
+        return () => window.removeEventListener('keydown', closeOnEscape);
+    }, [onClose]);
     const formatCurrency = (value) => {
         if (!value || value === 0) return 'Assessment data not available';
         return new Intl.NumberFormat('en-CA', {
@@ -170,30 +175,15 @@ function BuildingDetailsPanel({ building, onClose }) {
 
     const formatHeight = (height) => {
         if (!height || height === 0) return 'Height data not available';
-        return `${height} ${height > 50 ? 'm' : 'ft'}`;
+        return `${Number(height).toLocaleString('en-CA', { maximumFractionDigits: 2 })} m`;
     };
 
     const formatZoning = (zoning) => {
         if (!zoning) return 'Zoning data not available';
         
-        // Calgary zoning code explanations
-        const zoningExplanations = {
-            'CC-X': 'Centre City - Mixed use downtown core',
-            'RC-G': 'Residential - Contextual One/Two Dwelling District',
-            'M-CG': 'Mixed Use - Commercial/Residential',
-            'C-C1': 'Commercial - Community Commercial',
-            'C-O': 'Commercial - Office',
-            'I-G': 'Industrial - General Industrial',
-            'R-C1': 'Residential - Contextual One Dwelling',
-            'R-C2': 'Residential - Contextual One/Two Dwelling',
-            'M-C1': 'Mixed Use - Commercial',
-            'M-H1': 'Mixed Use - High Density',
-            'DC': 'Direct Control District'
-        };
-        
-        const explanation = zoningExplanations[zoning];
-        return explanation ? `${zoning} (${explanation})` : zoning;
+        return zoning;
     };
+
 
     const formatLandUse = (landUse) => {
         if (!landUse) return 'Land use data not available';
@@ -212,9 +202,9 @@ function BuildingDetailsPanel({ building, onClose }) {
   };
 
   return (
-    <PopupOverlay onClick={handleOverlayClick}>
+    <PopupOverlay onClick={handleOverlayClick} role="dialog" aria-modal="true" aria-label="Building details">
       <PopupContent>
-        <CloseButton onClick={onClose}>×</CloseButton>
+        <CloseButton aria-label="Close building details" onClick={onClose}>×</CloseButton>
         
         <BuildingTitle>
           {building.address || `Building ${building.building_id}`}
@@ -241,8 +231,9 @@ function BuildingDetailsPanel({ building, onClose }) {
           </InfoItem>
 
           <InfoItem>
-            <InfoLabel>Assessed Value</InfoLabel>
+            <InfoLabel>Matched Assessment (CAD)</InfoLabel>
             <InfoValue>{formatCurrency(building.assessed_value)}</InfoValue>
+            {building.assessed_value != null && <small>Matched property record, not a building total.</small>}
           </InfoItem>
 
           <InfoItem>
@@ -295,13 +286,16 @@ function BuildingDetailsPanel({ building, onClose }) {
         <FullWidthInfo>
           <InfoLabel>Data Source</InfoLabel>
           <InfoValue style={{fontSize: '12px', color: '#666'}}>
-            {building.data_source === 'sample' 
-              ? 'Sample data with realistic Calgary building characteristics'
-              : 'Live data from Calgary Open Data + OpenStreetMap'
-            }
+            {building.sources?.join(' ? ') || building.data_source || 'Source not recorded'}
           </InfoValue>
         </FullWidthInfo>
 
+        {building.permits?.length > 0 && <FullWidthInfo>
+          <InfoLabel>Building Permits</InfoLabel>
+          {building.permits.map(permit => <InfoValue key={permit.permitnum}>
+            <strong>{permit.permitnum}</strong> ? {permit.statuscurrent}<br />{permit.description}
+          </InfoValue>)}
+        </FullWidthInfo>}
         <FullWidthInfo>
           <InfoLabel>Building ID</InfoLabel>
           <InfoValue style={{fontSize: '11px', color: '#888'}}>

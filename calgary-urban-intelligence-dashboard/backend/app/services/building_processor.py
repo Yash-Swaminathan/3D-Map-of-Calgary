@@ -24,7 +24,8 @@ class BuildingProcessor:
         """
         processed_buildings = []
         
-        for building_data in raw_data:
+        unique_records = {str(row.get('building_id') or row.get('id') or row.get('objectid', '')): row for row in raw_data}
+        for building_data in unique_records.values():
             try:
                 building = self._process_single_building(building_data)
                 if building:
@@ -102,7 +103,7 @@ class BuildingProcessor:
         geometry = data.get('geometry') or data.get('the_geom')
         footprint_coords = data.get('footprint')
         
-        if geometry:
+        if isinstance(geometry, dict):
             lat, lng, footprint = self._extract_spatial_data(geometry)
             if lat and lng and not building.latitude:
                 building.latitude = lat
@@ -120,9 +121,8 @@ class BuildingProcessor:
         floors = data.get('floors') or data.get('num_floors')
         if floors:
             building.floors = self._safe_int(floors)
-        elif building.height:
-            # Estimate floors from height (3.5m per floor average)
-            building.floors = max(1, int(building.height / 3.5))
+        else:
+            building.floors = None
         
         # Building type and use
         building_type = (data.get('building_type') or 
@@ -145,8 +145,10 @@ class BuildingProcessor:
         building.last_updated = datetime.utcnow()
         
         # Store data source for tracking
-        if hasattr(building, '_data_source'):
-            building._data_source = data.get('data_source', 'unknown')
+        keys = ['data_source', 'sources', 'height_source', 'permits', 'roll_number', 'roll_year',
+                'property_type', 'assessment_class_description', 'land_use_designation',
+                'comm_name', 'year_of_construction', 'source_building_use', 'assessment_scope']
+        building.details = {key: data.get(key) for key in keys if key in data}
     
     def _extract_address(self, data: Dict) -> str:
         """Extract and format address from building data"""
@@ -167,7 +169,7 @@ class BuildingProcessor:
                 address_parts.append(str(suffix))
             return ' '.join(address_parts)
         
-        return f"Building {data.get('building_id', 'Unknown')}"
+        return None
     
     def _extract_spatial_data(self, geometry: Dict) -> Tuple[Optional[float], Optional[float], List]:
         """

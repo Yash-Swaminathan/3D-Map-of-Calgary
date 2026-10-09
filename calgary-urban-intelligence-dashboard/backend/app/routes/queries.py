@@ -1,3 +1,5 @@
+from werkzeug.exceptions import HTTPException
+from app.utils.validation import validate_bounds, validate_filters
 from flask import Blueprint, jsonify, request
 from app.services.building_query_service import BuildingQueryService
 from app.services.building_processor import BuildingProcessor
@@ -10,12 +12,14 @@ def process_query():
     """Process natural language query and return filtered buildings"""
     try:
         data = request.get_json()
+        if not isinstance(data, dict):
+            raise ValueError('Request body must be a JSON object.')
         if not data:
             return jsonify({'error': 'Request body is required'}), 400
         
         query = data.get('query')
         user_id = data.get('user_id')
-        bounds = data.get('bounds')  # Optional spatial bounds
+        bounds = validate_bounds(data['bounds']) if data.get('bounds') is not None else None  # Optional spatial bounds
         
         if not query:
             return jsonify({'error': 'query parameter is required'}), 400
@@ -73,6 +77,10 @@ def process_query():
             }
         })
         
+    except HTTPException:
+        raise
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 400
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
@@ -81,6 +89,8 @@ def parse_query_only():
     """Parse natural language query without applying to buildings"""
     try:
         data = request.get_json()
+        if not isinstance(data, dict):
+            raise ValueError('Request body must be a JSON object.')
         if not data:
             return jsonify({'error': 'Request body is required'}), 400
         
@@ -98,6 +108,10 @@ def parse_query_only():
             'result': query_result
         })
         
+    except HTTPException:
+        raise
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 400
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
@@ -147,10 +161,12 @@ def get_query_suggestions():
     })
 
 @queries_bp.route('/validate', methods=['POST'])
-def validate_filters():
+def validate_filter_request():
     """Validate filter criteria format"""
     try:
         data = request.get_json()
+        if not isinstance(data, dict):
+            raise ValueError('Request body must be a JSON object.')
         if not data:
             return jsonify({'error': 'Request body is required'}), 400
         
@@ -158,30 +174,13 @@ def validate_filters():
         if not filters:
             return jsonify({'error': 'filters parameter is required'}), 400
         
-        # Validate filter format
-        required_fields = ['attribute', 'operator', 'value']
-        valid_attributes = [
-            'height', 'zoning', 'assessed_value', 'building_type', 
-            'floors', 'land_use'
-        ]
-        valid_operators = ['>', '<', '=', '>=', '<=', 'contains']
-        
         errors = []
-        
-        # Check required fields
-        for field in required_fields:
-            if field not in filters:
-                errors.append(f'Missing required field: {field}')
-        
-        # Check valid values
-        if 'attribute' in filters and filters['attribute'] not in valid_attributes:
-            errors.append(f'Invalid attribute. Valid options: {", ".join(valid_attributes)}')
-        
-        if 'operator' in filters and filters['operator'] not in valid_operators:
-            errors.append(f'Invalid operator. Valid options: {", ".join(valid_operators)}')
-        
-        is_valid = len(errors) == 0
-        
+        try:
+            validate_filters(filters)
+        except ValueError as error:
+            errors.append(str(error))
+        is_valid = not errors
+
         return jsonify({
             'success': True,
             'valid': is_valid,
@@ -189,5 +188,9 @@ def validate_filters():
             'filters': filters
         })
         
+    except HTTPException:
+        raise
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 400
     except Exception as e:
         return jsonify({'error': str(e)}), 500 

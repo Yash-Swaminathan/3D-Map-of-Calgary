@@ -1,18 +1,32 @@
-from flask import Flask
+from flask import Flask, jsonify, request
 from flask_cors import CORS
 from flask_sqlalchemy import SQLAlchemy
 from config import config
+from werkzeug.exceptions import HTTPException
 
 # Initialize extensions
 db = SQLAlchemy()
 
-def create_app(config_name='default'):
+def create_app(config_name='default', config_overrides=None):
     """Application factory pattern for Flask app creation"""
     app = Flask(__name__)
     
     # Load configuration
     app.config.from_object(config[config_name])
+    app.config.update(config_overrides or {})
     
+    @app.errorhandler(HTTPException)
+    def http_error(error):
+        return jsonify({'error': error.description}), error.code
+
+    @app.before_request
+    def validate_json_body():
+        if request.path.startswith('/api/') and request.method in {'POST', 'PUT'}:
+            if not request.is_json:
+                return jsonify({'error': 'Use a JSON request body.'}), 400
+            if not isinstance(request.get_json(), dict):
+                return jsonify({'error': 'Request body must be a JSON object.'}), 400
+
     # Initialize extensions
     db.init_app(app)
     CORS(app, origins=app.config['CORS_ORIGINS'])

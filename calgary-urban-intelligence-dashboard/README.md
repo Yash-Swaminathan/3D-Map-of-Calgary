@@ -1,106 +1,101 @@
 # Calgary Urban Intelligence Dashboard
 
-An in-progress dashboard for exploring Calgary buildings, property assessments, permits, and zoning in an interactive 3D map. The intended workflow is to load a bounded area, ask a plain-English question, inspect matching buildings, and save the filters as a project.
+Explore downtown Calgary in an interactive 3D map. Ask a plain-English question about height, building use, assessment value, or zoning; select a building to inspect its data; and save filters as a project.
 
-## Current implementation
+## What works
 
-- React 18 and Three.js render building footprints and heights.
-- Flask serves routes under `/api` on port 5001.
-- `CalgaryDataFetcher` combines OpenStreetMap data with Calgary open datasets for outlines, 3D buildings, permits, assessments, and land-use districts.
-- `BuildingProcessor` stores building records and applies filters.
-- `BuildingQueryService` uses local `google/flan-t5-small` through Transformers, with rule-based parsing if model loading or interpretation fails.
-- SQLAlchemy models represent buildings, users, and saved project filters. SQLite is the default; `DATABASE_URL` can override it.
+- React 18 and Three.js render vertically extruded footprints with meter coordinates and a fixed area origin. Filtering preserves positions.
+- Flask serves routes under /api on port 5001.
+- Five Calgary datasets and OpenStreetMap are fetched concurrently within geographic bounds and joined with Shapely. Missing sources produce visible coverage notes.
+- Building use comes from Calgary roof-outline classifications, enriched with OpenStreetMap tags when available. Heights use Calgary rooftop/ground elevations or OSM height tags.
+- Supported natural-language filters use deterministic rules with feet-to-meter and CAD suffix conversions. Local Flan-T5 is optional.
+- SQLite stores buildings, provenance, exact-area caches, usernames, and saved filter sets. Projects reapply the same filters within the current study area.
+- The responsive UI includes coverage counts, loading/error/empty states, readable filters, building details, and project save/load/delete.
 
-This is a prototype, and the full workflow has not been verified. There is currently no Ollama integration or hosted Hugging Face inference API integration.
+Missing addresses, assessment values, and zoning remain unknown. Unknown-height meshes use a disclosed display placeholder that is not saved as a measurement. Assessment values belong to a matched property record and are not whole-building totals. Buildings can overlap multiple property records.
 
-## Project layout
+## Run locally
 
-```text
-calgary-urban-intelligence-dashboard/
-  backend/
-    app/
-      models/                       # Buildings, users, and saved projects
-      routes/
-        api.py                      # Health and user endpoints
-        buildings.py                # Building data endpoints
-        projects.py                 # Saved project endpoints
-        queries.py                  # Natural-language query endpoints
-      services/
-        calgary_data_fetcher.py      # OpenStreetMap and Calgary integration
-        building_processor.py       # Storage and building filters
-        building_query_service.py   # Local model and rule-based interpretation
-      utils/
-    config.py
-    requirements.txt
-    run.py
-  frontend/
-    public/
-    src/
-      components/
-        CalgaryMap3D/               # Map and BuildingMesh rendering
-        BuildingQueryPanel/         # Plain-English query input
-        BuildingDetailsPanel/       # Selected building details
-        SavedProjectsPanel/         # Save and load filters
-        UserIdentityForm/           # Username-based identification
-      services/dashboardApi.js      # Browser API client
-      App.js
-      index.js
-  docs/
-    architecture/system-overview.md
-    archive/original-internship-assignment-2025.pdf
-    calgary-api-setup.md
-  api_smoke_check.py                 # Manual check against a running backend
-```
+Use Python 3.10+ and Node.js with npm. From this directory:
 
-The original assignment is retained for historical context. The existing architecture diagrams and API setup notes also need a functional audit.
-
-## Local setup
-
-From this project directory, install and start the backend:
-
-```powershell
+~~~powershell
 cd backend
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
+Copy-Item .env.example .env
 python run.py
-```
+~~~
 
-Backend configuration can be placed in `backend/.env`:
+In another terminal:
 
-```dotenv
-FLASK_CONFIG=development
-SECRET_KEY=replace-with-a-local-secret
-PORT=5001
-CALGARY_DEVELOPER_TOKEN=
-```
-
-The default database filename remains `urban_dashboard.db` so existing local data is still used. Set `DATABASE_URL` for a different database. The local model downloads its weights on first use; `HUGGINGFACE_API_KEY` is not used by the current query service.
-
-In a second terminal, install and start the frontend:
-
-```powershell
+~~~powershell
 cd frontend
 npm ci
 npm start
-```
+~~~
 
-The frontend serves on `http://localhost:3000`; the backend serves on `http://localhost:5001`.
+Open http://localhost:3000. The development server proxies /api to http://localhost:5001. If port 3000 is occupied:
 
-## Known integration gaps
+~~~powershell
+$env:PORT = '3006'
+npm start
+~~~
 
-The naming cleanup preserves application behavior. Inspection identified existing issues to address before treating the dashboard as working:
+For a separately hosted frontend, set REACT_APP_API_URL to the backend origin or its /api URL before building. Configure backend CORS_ORIGINS for that frontend origin.
 
-- The browser API client defaults to port 5000, while the backend defaults to 5001.
-- The browser requests `/api/llm/*`, while the backend registers `/api/query/*`.
-- Several components request a named `apiService` export, while the client only exports a default.
-- The user and saved-project interfaces call client methods that have not been implemented (`login`, `getUserProjects`, and `deleteProject`).
+The default database is backend/instance/urban_dashboard.db. Existing building/project tables remain usable; new provenance/cache tables are created on startup. Areas are cached until refresh is requested. Refresh fetches first, then replaces that area's rows. A failed upstream fetch preserves the cache. DATABASE_URL can select another SQLAlchemy database.
 
-Live data coverage, spatial merging, model interpretation, and project persistence still need end-to-end verification. The manual `api_smoke_check.py` checks query processing and one debug endpoint; it is not a comprehensive test suite.
+## Optional local model
 
-## Documentation
+Common questions work without Torch, Transformers, or a model download:
 
-- [Calgary API setup notes](docs/calgary-api-setup.md)
-- [Architecture diagrams](docs/architecture/system-overview.md)
+- commercial buildings over 100 feet
+- buildings under 50 meters
+- properties over $2 million
+- buildings worth less than $500,000
+- CC-X buildings
 
-Building data comes from OpenStreetMap and the City of Calgary Open Data portal. Some attributes are estimated or unavailable; the dashboard should distinguish those from source measurements as development continues.
+To enable local Flan-T5 for other wording, install backend/requirements-llm.txt, set ENABLE_LOCAL_LLM=true in backend/.env, and restart. Model loading is lazy and cached. Invalid output produces a clear unsupported-question message. No hosted Hugging Face or Ollama endpoint is configured. The optional model path remains experimental.
+
+## Verification
+
+Backend tests use an isolated in-memory database and mocked upstream sources:
+
+~~~powershell
+cd backend
+python -m unittest discover -s tests -v
+~~~
+
+Frontend geometry/filter tests and production build:
+
+~~~powershell
+cd frontend
+$env:CI = 'true'
+npm test -- --watchAll=false --runInBand
+npm run build
+~~~
+
+Optional browser check with the app running:
+
+~~~powershell
+pip install -r scripts/requirements-browser.txt
+python scripts/browser_smoke_check.py --url http://localhost:3006
+~~~
+
+The browser check uses installed Chrome or Edge, exercises query/project/map/mobile workflows, and captures actual UI screenshots. Its temporary project is deleted after verification.
+
+## Scope and remaining limits
+
+This is a local prototype. The UI uses a fixed downtown area. Fetches are capped at 500 buildings and 2,000 enrichment records per source; coverage can change when public APIs fail. Caches only refresh on request. Spatial matches do not establish legal parcel/building relationships; complex multipart buildings and multiple assessment records need deeper modeling. Username identification has no passwords or access control. The optional model path has not been validated end to end.
+
+## Layout and documentation
+
+The application is split into frontend and backend folders. Frontend components cover the map, query panel, building details, saved projects, and identity form. Backend services cover data fetching, building persistence/filtering, and question interpretation.
+
+- [Calgary API setup](docs/calgary-api-setup.md)
+- [System architecture](docs/architecture/system-overview.md)
+- [UI screenshots](docs/screenshots/README.md)
+- docs/archive/original-internship-assignment-2025.pdf preserves the original assignment.
+
+Data attribution: City of Calgary Open Data and OpenStreetMap contributors.
