@@ -105,6 +105,7 @@ The application is split into frontend and backend folders. Frontend components 
 
 - [Calgary API setup](docs/calgary-api-setup.md)
 - [System architecture](docs/architecture/system-overview.md)
+- [Implementation plan and milestones](docs/implementation-plan.md)
 - [UI screenshots](docs/screenshots/README.md)
 - docs/archive/original-internship-assignment-2025.pdf preserves the original assignment.
 
