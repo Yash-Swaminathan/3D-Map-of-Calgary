@@ -1,7 +1,9 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, useMemo } from 'react';
 import { Canvas, useThree, useFrame } from '@react-three/fiber';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls';
 import BuildingMesh from './BuildingMesh';
+import BuildingInstances from './BuildingInstances';
+import { Color } from 'three';
 import { Raycaster, Vector2, Vector3, Plane } from 'three';
 import { ORIGIN, unproject } from '../../utils/viewport';
 import { projectPoint } from '../../utils/mapCoordinates';
@@ -16,12 +18,13 @@ class MapErrorBoundary extends React.Component {
   }
 }
 
-function Controls({ destination, onViewportChange }) {
+function Controls({ destination, onViewportChange, onViewCenterChange }) {
   const { camera, gl, size } = useThree();
   const controls = useRef();
   const timer = useRef();
   const report = React.useCallback(() => {
     camera.updateMatrixWorld();
+    if (controls.current) onViewCenterChange(unproject(controls.current.target.x, controls.current.target.z));
     const ray = new Raycaster();
     const ground = new Plane(new Vector3(0, 1, 0), 0);
     const points = [];
@@ -34,7 +37,7 @@ function Controls({ destination, onViewportChange }) {
       Math.min(...points.map(p => p[0])), Math.min(...points.map(p => p[1])),
       Math.max(...points.map(p => p[0])), Math.max(...points.map(p => p[1]))
     ].map(v => Number(v.toFixed(6))));
-  }, [camera, onViewportChange]);
+  }, [camera, onViewportChange, onViewCenterChange]);
   useEffect(() => {
     const orbit = new OrbitControls(camera, gl.domElement);
     controls.current = orbit;
@@ -60,9 +63,11 @@ function Controls({ destination, onViewportChange }) {
   return null;
 }
 
-export default function CalgaryMap3D({ buildings, selectedBuilding, onBuildingClick, isLoading, onViewportChange }) {
+export default function CalgaryMap3D({ buildings, selectedBuilding, onBuildingClick, isLoading, onViewportChange, densityCells = [] }) {
   const origin = ORIGIN;
-  const [destination, setDestination] = useState({ lat: ORIGIN[0], lon: ORIGIN[1], distance: 800 });
+  const viewCenter = useRef(ORIGIN);
+  const onViewCenterChange = React.useCallback(center => { viewCenter.current = center; }, []);
+  const [destination, setDestination] = useState({ lat: ORIGIN[0], lon: ORIGIN[1], distance: 2400 });
   const [coordinates, setCoordinates] = useState('51.045, -114.070');
   const [coordinateError, setCoordinateError] = useState('');
   const navigate = event => {
@@ -74,7 +79,8 @@ export default function CalgaryMap3D({ buildings, selectedBuilding, onBuildingCl
     setCoordinateError('');
     setDestination({ lat: values[0], lon: values[1], distance: 800 });
   };
-  const validBuildings = buildings.filter(b => Number.isFinite(b.latitude) && Number.isFinite(b.longitude));
+  const simplified = buildings.length > 2000;
+  const validBuildings = useMemo(() => buildings.filter(b => Number.isFinite(b.latitude) && Number.isFinite(b.longitude)), [buildings]);
   return (
     <div style={{ width: '100%', height: '100%', position: 'relative', background: '#edf1f2' }}>
       <MapErrorBoundary>
@@ -90,15 +96,27 @@ export default function CalgaryMap3D({ buildings, selectedBuilding, onBuildingCl
             <planeGeometry args={[100000, 100000]} />
             <meshStandardMaterial color="#e2e8e9" roughness={1} />
           </mesh>
-          <gridHelper args={[100000, 1000, '#b9c9ce', '#d0dadd']} position={[0, -0.1, 0]} />
-          {validBuildings.map(building => <BuildingMesh key={building.building_id || building.id}
+          {!densityCells.length && <gridHelper args={[100000, 1000, '#b9c9ce', '#d0dadd']} position={[0, -0.1, 0]} />}
+          {simplified ? <BuildingInstances buildings={validBuildings} origin={origin} selectedBuilding={selectedBuilding} onBuildingClick={onBuildingClick} /> : validBuildings.map(building => <BuildingMesh key={building.building_id || building.id}
             building={building} origin={origin} isSelected={selectedBuilding?.id === building.id}
             onClick={onBuildingClick} />)}
-          <Controls destination={destination} onViewportChange={onViewportChange} />
+          {densityCells.map((cell, index) => {
+            const [south, west, north, east] = cell.bounds;
+            const a = projectPoint(west, south, origin), b = projectPoint(east, north, origin);
+            const fraction = cell.count == null ? 0 : cell.count / Math.max(1, ...densityCells.map(c => c.count || 0));
+            const color = cell.count == null ? '#a9b4ba' : new Color('#d6e9ea').lerp(new Color('#19586f'), Math.sqrt(fraction));
+            return <mesh key={index} position={[(a[0] + b[0]) / 2, 1, (a[2] + b[2]) / 2]} rotation={[-Math.PI / 2, 0, 0]}
+              onClick={event => { event.stopPropagation(); setDestination({ lat: (south + north) / 2, lon: (west + east) / 2, distance: 2400 }); }}>
+              <planeGeometry args={[Math.abs(b[0] - a[0]) * 0.96, Math.abs(b[2] - a[2]) * 0.96]} />
+              <meshBasicMaterial color={color} transparent depthTest={false} depthWrite={false} opacity={cell.count === 0 ? 0.2 : 0.85} />
+            </mesh>;
+          })}
+          <Controls destination={destination} onViewportChange={onViewportChange} onViewCenterChange={onViewCenterChange} />
         </Canvas>
       </MapErrorBoundary>
       <div className="map-tools"><span className="north-indicator">N &uarr;</span>
-        <button className="secondary-button" onClick={() => setDestination({ lat: ORIGIN[0], lon: ORIGIN[1], distance: 800 })}>Reset view</button>
+        <button className="secondary-button" onClick={() => setDestination({ lat: ORIGIN[0], lon: ORIGIN[1], distance: 2400 })}>Reset view</button>
+        <button className="secondary-button" onClick={() => setDestination({ lat: viewCenter.current[0], lon: viewCenter.current[1], distance: 4000 })}>Wider area</button>
         <button className="secondary-button" onClick={() => setDestination({ lat: 51.03, lon: -114.07, distance: 40000 })}>City overview</button>
         <form onSubmit={navigate} className="map-location">
           <input aria-label="Map latitude, longitude" value={coordinates} onChange={e => setCoordinates(e.target.value)} />
@@ -106,7 +124,7 @@ export default function CalgaryMap3D({ buildings, selectedBuilding, onBuildingCl
           {coordinateError && <span role="alert">{coordinateError}</span>}
         </form></div>
       <div className="map-help">Drag to orbit | Scroll to zoom | Right-drag to pan<br />
-        Select a building for details | Grid: 100 m<br />Double-click the ground to explore that location.<br />Buildings load as you move. Unknown heights use a display placeholder.</div>
+        Select a building for details | Grid: 100 m<br />{simplified ? 'Simplified building shapes at this scale.' : densityCells.length ? 'Darker cells contain more roof records.' : 'Detailed building footprints.'}<br />Double-click the ground to explore that location.<br />Buildings load as you move. Unknown heights use a display placeholder.</div>
       {isLoading && <div className="map-loading" role="status"><span className="loading-spinner" />Loading building data...</div>}
     </div>
   );

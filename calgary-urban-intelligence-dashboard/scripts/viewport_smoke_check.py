@@ -15,7 +15,8 @@ with sync_playwright() as p:
     initial = page.locator('.map-heading > span').inner_text()
     coords = page.locator('.viewport-coordinates').inner_text()
     print('INITIAL:', initial, coords, flush=True)
-    assert int(initial.split()[0].replace(',', '')) > 500
+    assert int(initial.split()[0].replace(',', '')) > 2000
+    assert float(coords.split('to ')[1].split(',')[1]) - float(coords.split(',')[1].split(' to')[0]) > .04
     page.screenshot(path=str(output / 'dashboard-desktop.png'), full_page=True)
     page.get_by_label('Building question').fill('buildings over 100 feet')
     page.get_by_role('button', name='Search', exact=True).click()
@@ -47,16 +48,24 @@ with sync_playwright() as p:
     page.get_by_role('heading', name='Calgary overview').wait_for()
     page.wait_for_function("!document.querySelector('.map-loading') && /^[0-9,]+ roof records/.test(document.querySelector('.map-heading > span').textContent)", timeout=180000)
     assert page.locator('.overview-note').is_visible()
-    print('OVERVIEW:', page.locator('.map-heading > span').inner_text(), flush=True)
+    assert page.locator('.map-help').inner_text().find('Darker cells') >= 0
+    print('DENSITY OVERVIEW:', page.locator('.map-heading > span').inner_text(), flush=True)
     page.screenshot(path=str(output / 'dashboard-overview.png'), full_page=True)
-    page.mouse.dblclick(898, 544)
+    page.mouse.click(1040, 480)
     page.get_by_role('heading', name='Current map area').wait_for()
     page.wait_for_function("!document.querySelector('.map-loading')", timeout=300000)
-    print('DOUBLE-CLICK:', page.locator('.map-heading > span').inner_text(), flush=True)
+    print('DENSITY CELL CLICK:', page.locator('.map-heading > span').inner_text(), flush=True)
     page.get_by_role('button', name='Reset view', exact=True).click()
     page.get_by_role('heading', name='Current map area').wait_for()
     page.wait_for_function("!document.querySelector('.map-loading')", timeout=300000)
     assert page.locator('.map-heading > span').inner_text() == initial
+    page.get_by_role('button', name='Wider area', exact=True).click()
+    page.wait_for_function("Number(document.querySelector('.viewport-coordinates').textContent.split('to ')[1].split(',')[0]) - Number(document.querySelector('.viewport-coordinates').textContent.split(': ')[1].split(',')[0]) > .045", timeout=20000)
+    page.wait_for_function("!document.querySelector('.map-loading')", timeout=600000)
+    wider = page.locator('.map-heading > span').inner_text()
+    assert int(wider.split()[0].replace(',', '')) > int(initial.split()[0].replace(',', ''))
+    page.screenshot(path=str(output / 'dashboard-wide-area.png'), full_page=True)
+    print('WIDER AREA:', wider, flush=True)
     assert not errors, errors
     print('PASS: More than 500 live buildings; navigation and pan change bounds; filters persist; overview returns to cached detail.', flush=True)
     browser.close()

@@ -19,8 +19,8 @@ def validate_bounds(value):
     south, west, north, east = bounds
     if not all(math.isfinite(x) for x in bounds) or not (-90 <= south < north <= 90 and -180 <= west < east <= 180):
         raise ValueError('Bounds must be finite, valid coordinates ordered south, west, north, east.')
-    if north - south > 0.05 or east - west > 0.05:
-        raise ValueError('Select a smaller area (at most 0.05 degrees on each side).')
+    if north - south > 0.15 or east - west > 0.15:
+        raise ValueError('Select a smaller area (at most 0.15 degrees on each side).')
     return bounds
 
 

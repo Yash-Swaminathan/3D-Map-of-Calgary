@@ -48,7 +48,7 @@ The default database is backend/instance/urban_dashboard.db. Existing building/p
 
 ## Navigate the city
 
-Right-drag to pan, scroll to zoom, double-click the ground to explore that location, or enter latitude, longitude in the map's Go control. Reset view returns downtown; City overview zooms out across Calgary. The study-area coordinates update from camera/ground intersections, including after resizing. Active filters stay applied as new buildings arrive. Requests for an old view are cancelled and cannot replace a newer view. Loaded tiles are reused in memory and SQLite.
+Right-drag to pan, scroll to zoom, double-click the ground to explore that location, or enter latitude, longitude in the map's Go control. Reset view returns to the wider central Calgary region; Wider area shows a larger region with individual buildings, and City overview shows roof density across Calgary. The study-area coordinates update from camera/ground intersections, including after resizing. Active filters stay applied as new buildings arrive. Requests for an old view are cancelled and cannot replace a newer view. Loaded tiles are reused in memory and SQLite.
 
 No new API key, database reset, or manual bounds edit is needed. Restart the backend and frontend after pulling. New cache tables are created automatically. The first visit to an uncached area can take one to several minutes because assessment records require many upstream pages. Failures remain visible alongside partial results; Retry loading area retries unfinished tiles. Refresh data explicitly refreshes the visible tiles.
 
@@ -90,13 +90,14 @@ Optional browser check with the app running:
 pip install -r scripts/requirements-browser.txt
 python scripts/browser_smoke_check.py --url http://localhost:3006
 python scripts/viewport_smoke_check.py
+python scripts/viewport_controls_check.py
 ~~~
 
 The browser check uses installed Chrome or Edge, exercises query/project/map/mobile workflows, and captures actual UI screenshots. Its temporary project is deleted after verification.
 
 ## Scope and remaining limits
 
-This is a local prototype. The camera starts downtown, then pan/zoom loads the visible area anywhere in Calgary. All five sources paginate until exhausted; the area API sends 500-row pages with total_count, next_offset, and a snapshot version. The browser consumes every page and deduplicates shared footprints across tiles. Broad views covering more than 16 tiles show a live roof-record count; zoom in anywhere to render individual buildings. This avoids rendering hundreds of thousands of meshes at once. Coverage can change when public APIs fail. Caches only refresh on request. Spatial matches do not establish legal parcel/building relationships; complex multipart buildings and multiple assessment records need deeper modeling. Username identification has no passwords or access control. The optional model path has not been validated end to end.
+This is a local prototype. The camera starts downtown, then pan/zoom loads the visible area anywhere in Calgary. All five sources paginate until exhausted; the area API sends 500-row pages with total_count, next_offset, and a snapshot version. The browser consumes every page and deduplicates shared footprints across tiles. The starting camera covers roughly nine times the former downtown view. Wider area expands the rendered region again. Views covering more than 144 tiles or exceeding 0.12 degrees switch to a geographic density layer from live roof counts; click a cell or zoom in anywhere to render individual buildings. Regions with more than 2,000 buildings use one instanced layer of simplified bounding boxes, with measured heights when available. Smaller views restore detailed footprints. This avoids rendering hundreds of thousands of meshes at once. Coverage can change when public APIs fail. Caches only refresh on request. Spatial matches do not establish legal parcel/building relationships; complex multipart buildings and multiple assessment records need deeper modeling. Username identification has no passwords or access control. The optional model path has not been validated end to end.
 
 ## Layout and documentation
 

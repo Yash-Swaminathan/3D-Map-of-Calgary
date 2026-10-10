@@ -216,5 +216,35 @@ class DashboardTests(unittest.TestCase):
             result = fetcher.fetch_combined_building_data(BOUNDS, include_osm=False)
         self.assertEqual(len(result), 1)
 
+    def test_regional_query_bounds_are_supported(self):
+        self.seed()
+        response = self.client.post('/api/query/process', json={
+            'query': 'buildings over 100 feet', 'bounds': [51.02, -114.12, 51.08, -114.02]})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(response.get_json()['buildings']), 1)
+
+    def test_city_density_is_geographic_live_cached_and_refreshable(self):
+        from app.services import building_coverage_service as coverage
+        coverage._cache.clear()
+        response = Mock()
+        response.json.return_value = [{'count': '100'}]
+        url = '/api/buildings/coverage?bounds=50.9,-114.3,51.2,-113.9&density=true'
+        with patch('app.services.calgary_data_fetcher.requests.Session.get', return_value=response) as get:
+            result = self.client.get(url)
+            self.assertEqual(result.status_code, 200)
+            data = result.get_json()
+            self.assertEqual(data['source_record_count'], 100)
+            self.assertEqual(len(data['density_cells']), 16)
+            self.assertEqual(len({tuple(c['bounds']) for c in data['density_cells']}), 16)
+            self.assertTrue(all(c['count'] == 100 for c in data['density_cells']))
+            self.assertEqual(get.call_count, 17)
+            self.client.get(url)
+            self.assertEqual(get.call_count, 17)
+            self.client.get(url + '&refresh=true')
+            self.assertEqual(get.call_count, 34)
+            moved = self.client.get('/api/buildings/coverage?bounds=51.0,-114.2,51.3,-113.8&density=true').get_json()
+            self.assertNotEqual(data['density_cells'][0]['bounds'], moved['density_cells'][0]['bounds'])
+        coverage._cache.clear()
+
 if __name__ == '__main__':
     unittest.main()

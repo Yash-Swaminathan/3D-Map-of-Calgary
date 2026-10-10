@@ -84,11 +84,15 @@ def get_coverage():
                 -90 <= south < north <= 90 and -180 <= west < east <= 180):
             raise ValueError('Invalid coverage bounds.')
         fetcher = CalgaryDataFetcher()
-        polygon = f'POLYGON(({west} {south},{east} {south},{east} {north},{west} {north},{west} {south}))'
-        response = fetcher.session.get(f'{fetcher.base_url}/uc4c-6kbd.json', params={
-            '$select': 'count(*) AS count', '$where': f"intersects(multipolygon, '{polygon}')"}, timeout=20)
-        response.raise_for_status()
-        return jsonify({'success': True, 'source_record_count': int(response.json()[0]['count'])})
+        from app.services.building_coverage_service import count_roofs, coverage_grid
+        bounds = [south, west, north, east]
+        refresh = request.args.get('refresh', 'false').lower() == 'true'
+        total = count_roofs(fetcher, bounds, refresh)
+        cells = coverage_grid(fetcher, bounds, refresh) if request.args.get('density') == 'true' else []
+        warnings = ['Some density cells could not be loaded. Refresh to retry.'] if any(
+            cell['count'] is None for cell in cells) else []
+        return jsonify({'success': True, 'source_record_count': total,
+                        'density_cells': cells, 'warnings': warnings})
     except (ValueError, TypeError):
         return jsonify({'error': 'Invalid coverage bounds.'}), 400
     except Exception:

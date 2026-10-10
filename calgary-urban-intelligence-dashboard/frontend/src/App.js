@@ -15,8 +15,10 @@ export default function App() {
   const [buildings, setBuildings] = useState([]);
   const [bounds, setBounds] = useState(null);
   const [refreshCounter, setRefreshCounter] = useState(0);
+  const [densityCells, setDensityCells] = useState([]);
   const [overviewCount, setOverviewCount] = useState(null);
   const [progress, setProgress] = useState('Waiting for map');
+  const refreshCoverage = useRef(false);
   const refreshKeys = useRef(new Set());
   const [queryLoading, setQueryLoading] = useState(false);
   const tileCache = useRef(new Map());
@@ -29,22 +31,23 @@ export default function App() {
   const [showIdentity, setShowIdentity] = useState(false);
   const [status, setStatus] = useState(null);
   const tiles = useMemo(() => bounds ? tilesForBounds(bounds) : [], [bounds]);
-  // Broad views use live source counts, then automatically return to meshes on zoom-in.
-  const overview = tiles.length > 16 || (bounds && (bounds[2] - bounds[0] > 0.05 || bounds[3] - bounds[1] > 0.05));
+  // Broad views show live geographic density; zoom-in returns to building meshes.
+  const overview = tiles.length > 144 || (bounds && (bounds[2] - bounds[0] > 0.12 || bounds[3] - bounds[1] > 0.12));
   const visibleBuildings = useMemo(() => buildings.filter(b => matchesFilters(b, activeFilters)), [buildings, activeFilters]);
-  const refresh = () => { tileCache.current.clear(); refreshKeys.current = new Set(tiles.map(t => t.join(','))); setRefreshCounter(v => v + 1); };
+  const refresh = () => { tileCache.current.clear(); refreshCoverage.current = overview; refreshKeys.current = new Set(overview ? [] : tiles.map(t => t.join(','))); setRefreshCounter(v => v + 1); };
   useEffect(() => {
     if (!bounds) return;
     const controller = new AbortController();
     let cancelled = false;
     setIsLoading(true); setError(null); setSelectedBuilding(null); setOverviewCount(null);
-    setBuildings([]); setStatus(null); setProgress(`Loading ${tiles.length} area tiles`);
+    setBuildings([]); setDensityCells([]); setStatus(null); setProgress(`Loading ${tiles.length} area tiles`);
     const load = async () => {
       try {
         if (overview) {
           setProgress('Counting live roof records for this view');
-          const { data } = await apiService.getCoverage(bounds, controller.signal);
-          if (!cancelled) setOverviewCount(data.source_record_count);
+          const force = refreshCoverage.current; refreshCoverage.current = false;
+          const { data } = await apiService.getCoverage(bounds, controller.signal, force);
+          if (!cancelled) { setOverviewCount(data.source_record_count); setDensityCells(data.density_cells || []); setStatus(data); }
           return;
         }
         const records = new Map();
@@ -86,7 +89,7 @@ export default function App() {
             if (!cancelled) setStatus({ ...result, warnings: [...warnings] });
           }
         };
-        await Promise.all([worker(), worker()]);
+        await Promise.all([worker(), worker(), worker(), worker()]);
       } catch (err) {
         if (!cancelled) { setError(err.message); cancelled = true; controller.abort(); setIsLoading(false); }
       } finally {
@@ -162,19 +165,19 @@ export default function App() {
             <p>Pan or zoom to load the visible area. Find buildings by height, use, assessed value, or land-use district.</p>
             <div className="metrics">
               <div><strong>{overview ? overviewCount?.toLocaleString() || '...' : buildings.length.toLocaleString()}</strong><span>{overview ? 'Roof records' : 'Buildings'}</span></div>
-              <div><strong>{overview ? '—' : heightCount.toLocaleString()}</strong><span>Known heights</span></div>
-              <div><strong>{overview ? '—' : assessedCount.toLocaleString()}</strong><span>Assessments</span></div>
+              <div><strong>{overview ? '-' : heightCount.toLocaleString()}</strong><span>Known heights</span></div>
+              <div><strong>{overview ? '-' : assessedCount.toLocaleString()}</strong><span>Assessments</span></div>
             </div>
             <div className="data-note">
               <span className={`status-dot ${error ? 'error' : ''}`} />
               {isLoading ? progress : error ? 'Data request needs attention' : overview ? 'Live City of Calgary roof-record count' :
-                status ? `${status.cache_status === 'cached' ? 'Cached' : 'Fresh'} open data | ${new Date(status.fetched_at + 'Z').toLocaleDateString()}` : 'Waiting for data'}
+                status?.fetched_at ? `${status.cache_status === 'cached' ? 'Cached' : 'Fresh'} open data | ${new Date(status.fetched_at + 'Z').toLocaleDateString()}` : 'Waiting for data'}
             </div>
             {status?.warnings?.length > 0 && <details className="source-warnings"><summary>Data coverage notes</summary>
               {status.warnings.map(warning => <p key={warning}>{warning}</p>)}</details>}
           </div>
           {bounds && <p className="viewport-coordinates">Current view: {bounds[0].toFixed(4)}, {bounds[1].toFixed(4)} to {bounds[2].toFixed(4)}, {bounds[3].toFixed(4)}</p>}
-          {overview && <p className="overview-note">{overviewCount == null ? 'City overview' : `${overviewCount.toLocaleString()} roof records in this view`}. Zoom in anywhere to load individual buildings and apply filters.</p>}
+          {overview && <p className="overview-note">{overviewCount == null ? 'City overview' : `${overviewCount.toLocaleString()} roof records in this view`}. The coloured cells show roof density across this view. Click a cell to explore its buildings.</p>}
           <BuildingQueryPanel onQuerySubmit={handleQuery} onClearFilters={clearFilters}
             activeFilters={activeFilters} isLoading={isLoading || queryLoading} disabled={overview} error={error}
             buildingCount={visibleBuildings.length} totalBuildings={buildings.length} />
@@ -184,14 +187,14 @@ export default function App() {
         </aside>
         <section className="map-panel" aria-label="Interactive 3D building map">
           <CalgaryMap3D buildings={visibleBuildings} selectedBuilding={selectedBuilding}
-            onBuildingClick={setSelectedBuilding} isLoading={isLoading} onViewportChange={onViewportChange} />
+            onBuildingClick={setSelectedBuilding} isLoading={isLoading} onViewportChange={onViewportChange} densityCells={densityCells} />
           <div className="map-heading"><p className="eyebrow">3D BUILDING EXPLORER</p><h2>{overview ? 'Calgary overview' : 'Current map area'}</h2>
             <span>{overview ? `${overviewCount?.toLocaleString() || 'Counting'} roof records` : `${visibleBuildings.length.toLocaleString()} ${activeFilters ? 'matching' : 'mapped'} buildings`}</span></div>
           {!overview && <div className="map-legend"><span className="legend-title">BUILDING USE</span>
             {['Commercial', 'Residential', 'Industrial', 'Mixed Use', 'Unknown'].map((label, i) =>
               <span key={label}><i style={{ background: ['#528fbc', '#71a995', '#a093bf', '#d8ad66', '#a9b4ba'][i] }} />{label}</span>)}
           </div>}
-          {overview && !isLoading && <div className="map-empty overview-prompt" role="status"><strong>Explore any part of Calgary</strong><p>Scroll to zoom in, or double-click the ground to load buildings there.</p></div>}
+          {overview && !isLoading && <div className="map-empty overview-prompt" role="status"><strong>City building density</strong><p>Click a coloured cell or zoom in to explore individual buildings.</p></div>}
           {!overview && !isLoading && !visibleBuildings.length && <div className="map-empty" role="status">
             <strong>{error ? 'Building data is unavailable' : activeFilters ? 'No buildings match these filters' : 'No buildings found in this area'}</strong>
             <p>{error ? 'Check the message in the sidebar and retry.' : activeFilters ? 'Clear the filters to explore the full area.' : 'Pan to another area or refresh the open data.'}</p>
