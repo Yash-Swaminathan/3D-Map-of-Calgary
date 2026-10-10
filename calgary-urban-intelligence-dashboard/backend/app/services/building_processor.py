@@ -12,7 +12,7 @@ class BuildingProcessor:
     def __init__(self):
         pass
     
-    def process_and_store_buildings(self, raw_data: List[Dict]) -> List[Building]:
+    def process_and_store_buildings(self, raw_data: List[Dict], commit=True) -> List[Building]:
         """
         Process raw building data and store in database
         
@@ -25,9 +25,14 @@ class BuildingProcessor:
         processed_buildings = []
         
         unique_records = {str(row.get('building_id') or row.get('id') or row.get('objectid', '')): row for row in raw_data}
+        existing = {}
+        identifiers = list(unique_records)
+        for offset in range(0, len(identifiers), 500):
+            existing.update({b.building_id: b for b in Building.query.filter(
+                Building.building_id.in_(identifiers[offset:offset + 500])).all()})
         for building_data in unique_records.values():
             try:
-                building = self._process_single_building(building_data)
+                building = self._process_single_building(building_data, existing)
                 if building:
                     processed_buildings.append(building)
             except Exception as e:
@@ -37,7 +42,9 @@ class BuildingProcessor:
         # Bulk commit to database
         try:
             db.session.add_all(processed_buildings)
-            db.session.commit()
+            db.session.flush()
+            if commit:
+                db.session.commit()
             logger.info(f"Successfully stored {len(processed_buildings)} buildings in database")
         except Exception as e:
             logger.error(f"Error committing buildings to database: {e}")
@@ -46,7 +53,7 @@ class BuildingProcessor:
         
         return processed_buildings
     
-    def _process_single_building(self, data: Dict) -> Optional[Building]:
+    def _process_single_building(self, data: Dict, existing=None) -> Optional[Building]:
         """
         Process a single building record
         
@@ -65,7 +72,7 @@ class BuildingProcessor:
                 return None
             
             # Check if building already exists
-            existing_building = Building.query.filter_by(building_id=building_id).first()
+            existing_building = existing.get(str(building_id)) if existing is not None else Building.query.filter_by(building_id=building_id).first()
             if existing_building:
                 # Update existing building with new data
                 self._update_building_from_data(existing_building, data)
@@ -259,15 +266,29 @@ class BuildingProcessor:
         Returns:
             List of Building objects within bounds
         """
-        lat_min, lon_min, lat_max, lon_max = bounds
-        
-        buildings = Building.query.filter(
-            Building.latitude.between(lat_min, lat_max),
-            Building.longitude.between(lon_min, lon_max)
-        ).all()
-        
-        return buildings
-    
+        from app.models.building import AreaSnapshot, AreaBuilding
+        from shapely.geometry import Polygon, box, Point
+        south, west, north, east = bounds
+        overlapping = []
+        for area in AreaSnapshot.query.all():
+            a, b, c, d = (float(v) for v in area.bounds_key.split(','))
+            if a <= north and c >= south and b <= east and d >= west:
+                overlapping.append(area.bounds_key)
+        if overlapping:
+            candidates = Building.query.join(AreaBuilding).filter(
+                AreaBuilding.bounds_key.in_(overlapping)).distinct().all()
+        else:
+            candidates = Building.query.filter(
+                Building.latitude.between(south, north), Building.longitude.between(west, east)).all()
+        viewport = box(west, south, east, north)
+        result = []
+        for building in candidates:
+            coords = building.footprint
+            geo = Polygon(coords) if len(coords) >= 3 else Point(building.longitude, building.latitude)
+            if geo.intersects(viewport):
+                result.append(building)
+        return result
+
     def filter_buildings(self, buildings: List[Building], filter_criteria: Dict) -> List[Building]:
         """
         Filter buildings based on criteria

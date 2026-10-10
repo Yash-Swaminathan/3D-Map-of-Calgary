@@ -27,7 +27,7 @@ class Building(db.Model):
     assessed_value = db.Column(db.Float)  # Property assessment value
     land_use = db.Column(db.String(100))
     
-    details_record = db.relationship('BuildingDetails', uselist=False, cascade='all, delete-orphan')
+    details_record = db.relationship('BuildingDetails', uselist=False, cascade='all, delete-orphan', lazy='selectin')
 
     @property
     def details(self):
@@ -120,3 +120,18 @@ class CachedArea(db.Model):
     bounds_key = db.Column(db.String(160), primary_key=True)
     fetched_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
     warnings_json = db.Column(db.Text, nullable=False, default='[]')
+
+
+class AreaSnapshot(db.Model):
+    """Versioned cache separate from legacy capped area results."""
+    __tablename__ = 'area_snapshots'
+    bounds_key = db.Column(db.String(160), primary_key=True)
+    fetched_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    warnings_json = db.Column(db.Text, nullable=False, default='[]')
+    members = db.relationship('AreaBuilding', cascade='all, delete-orphan')
+
+
+class AreaBuilding(db.Model):
+    __tablename__ = 'area_buildings'
+    bounds_key = db.Column(db.String(160), db.ForeignKey('area_snapshots.bounds_key'), primary_key=True)
+    building_id = db.Column(db.Integer, db.ForeignKey('buildings.id'), primary_key=True)

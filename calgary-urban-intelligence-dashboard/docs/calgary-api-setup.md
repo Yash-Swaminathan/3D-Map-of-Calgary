@@ -23,6 +23,6 @@ Invoke-RestMethod 'http://localhost:5001/api/health'
 Invoke-RestMethod 'http://localhost:5001/api/buildings/area?bounds=51.042,-114.075,51.048,-114.065'
 ~~~
 
-Responses include buildings, statistics, cache_status, fetched_at, and source warnings. Add &refresh=true to fetch again. Initial requests can take roughly a minute while public APIs respond. OpenStreetMap enrichment tries a second Overpass endpoint when the first fails.
+Responses include buildings, total_count, next_offset, version, cache_status, fetched_at, and source warnings. Follow next_offset with &offset=<value>&version=<version> until next_offset is null to receive the complete area. Add &refresh=true to fetch again. Uncached requests can take one to several minutes while public APIs paginate. Automatic map requests use five official City sources by default. Set ENABLE_OSM_ENRICHMENT=true to enable optional OpenStreetMap enrichment; it tries a second Overpass endpoint when the first fails. No token is required for normal public access.
 
 Supported rules require no model or API key. Optional local Flan-T5 is described in the README. HUGGINGFACE_API_KEY is not a hosted inference setting.

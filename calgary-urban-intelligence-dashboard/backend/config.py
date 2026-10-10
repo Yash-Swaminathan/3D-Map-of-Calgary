@@ -17,6 +17,8 @@ class Config:
     CALGARY_OPEN_DATA_BASE_URL = 'https://data.calgary.ca/resource'
     CALGARY_DEVELOPER_TOKEN = os.environ.get('CALGARY_DEVELOPER_TOKEN')  # Calgary's native developer token
     
+    ENABLE_OSM_ENRICHMENT = os.environ.get('ENABLE_OSM_ENRICHMENT', 'false').lower() == 'true'
+
     # CORS Configuration
     CORS_ORIGINS = [origin.strip() for origin in os.environ.get(
         'CORS_ORIGINS', 'http://localhost:3000,http://localhost:3006,http://127.0.0.1:3006'

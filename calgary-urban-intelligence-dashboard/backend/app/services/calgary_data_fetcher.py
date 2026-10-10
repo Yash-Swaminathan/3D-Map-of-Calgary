@@ -5,7 +5,8 @@ import math
 from concurrent.futures import ThreadPoolExecutor
 import requests
 from flask import current_app
-from shapely.geometry import shape, Point
+from shapely.geometry import shape, Point, box
+from shapely.strtree import STRtree
 from shapely import make_valid
 from shapely.errors import ShapelyError
 
@@ -26,8 +27,10 @@ class CalgaryDataFetcher:
     def fetch_all_records(self, dataset_id, limit_per_request=1000, max_total_records=1000, additional_params=None):
         records = []
         try:
-            while len(records) < max_total_records:
-                page_size = min(limit_per_request, 1000, max_total_records - len(records))
+            while max_total_records is None or len(records) < max_total_records:
+                page_size = min(limit_per_request, 5000)
+                if max_total_records is not None:
+                    page_size = min(page_size, max_total_records - len(records))
                 params = {'$order': ':id', '$limit': page_size, '$offset': len(records)}
                 params.update(additional_params or {})
                 response = self.session.get(f'{self.base_url}/{dataset_id}.json', params=params, timeout=20)
@@ -51,8 +54,8 @@ class CalgaryDataFetcher:
             quoted = ["'" + str(v).replace("'", "''") + "'" for v in parcel_ids]
             params['$where'] += ' AND roll_number in (' + ','.join(quoted) + ')'
         if order:
-            params['$order'] = order
-        return self.fetch_all_records(dataset, max_total_records=limit, additional_params=params)
+            params['$order'] = order + ', :id'
+        return self.fetch_all_records(dataset, limit_per_request=5000, max_total_records=limit, additional_params=params)
 
     @staticmethod
     def _number(value):
@@ -166,12 +169,14 @@ class CalgaryDataFetcher:
     def _building_polygon(building):
         return shape({'type': 'Polygon', 'coordinates': [building['footprint']]})
 
-    def fetch_combined_building_data(self, bounds=None, limit=500):
+    def fetch_combined_building_data(self, bounds=None, limit=None, include_osm=True):
         # Sources are independent and bounded; fetch once per source.
         methods = [self.fetch_building_footprints, self.fetch_3d_buildings, self.fetch_osm_buildings,
                    self.fetch_zoning_data, self.fetch_property_assessments, self.fetch_building_permits]
         def fetch(method):
-            return method(bounds=bounds, limit=limit if method in methods[:3] else 2000)
+            if method == self.fetch_osm_buildings and not include_osm:
+                return []
+            return method(bounds=bounds, limit=limit)
         with ThreadPoolExecutor(max_workers=6) as pool:
             footprints, heights, osm, zones, assessments, permits = list(pool.map(fetch, methods))
         buildings = footprints or heights or osm
@@ -180,12 +185,14 @@ class CalgaryDataFetcher:
         buildings = list({b['building_id']: b for b in buildings}.values())
         # Join heights and OSM tags only to an existing footprint containing their center.
         shapes = [(b, self._building_polygon(b)) for b in buildings]
+        tree = STRtree([g for _, g in shapes])
+        known_ids = {b['building_id'] for b in buildings}
         for additions in [heights, osm]:
             if additions is buildings:
                 continue
             for record in additions:
                 point = Point(record['longitude'], record['latitude'])
-                target = next((b for b, polygon in shapes if polygon.covers(point)), None)
+                target = next((shapes[i][0] for i in tree.query(point, predicate='covered_by')), None)
                 if target:
                     for key in ['height', 'height_source', 'floors', 'address']:
                         if record.get(key) is not None and target.get(key) is None:
@@ -194,21 +201,27 @@ class CalgaryDataFetcher:
                         target['building_type'] = record['building_type']
                     target['sources'] = list(dict.fromkeys(target['sources'] + record['sources']))
                 elif additions is osm:
-                    if record['building_id'] not in {b['building_id'] for b in buildings}:
+                    if record['building_id'] not in known_ids:
                         buildings.append(record)
                         shapes.append((record, self._building_polygon(record)))
-        zone_shapes = [(row, self._geometry(row)) for row in zones]
-        assessment_shapes = [(row, self._geometry(row)) for row in assessments]
+                        known_ids.add(record['building_id'])
+                        tree = STRtree([g for _, g in shapes])
+        def indexed(rows):
+            pairs = [(row, g) for row in rows if (g := self._geometry(row)) is not None]
+            return pairs, STRtree([g for _, g in pairs])
+        zone_shapes, zone_tree = indexed(zones)
+        assessment_shapes, assessment_tree = indexed(assessments)
+        permit_shapes, permit_tree = indexed(permits)
         for building in buildings:
             polygon = self._building_polygon(building)
             point = polygon.representative_point()
-            zone = next((r for r, g in zone_shapes if g is not None and g.covers(point)), None)
+            zone = next((zone_shapes[i][0] for i in zone_tree.query(point, predicate='covered_by')), None)
             if zone:
                 building['zoning'] = zone.get('lu_code')
                 building['land_use'] = zone.get('description')
                 building['sources'].append('calgary_zoning')
-            matches = [(r, polygon.intersection(g).area) for r, g in assessment_shapes
-                       if g is not None and g.intersects(polygon)]
+            matches = [(assessment_shapes[i][0], polygon.intersection(assessment_shapes[i][1]).area)
+                       for i in assessment_tree.query(polygon, predicate='intersects')]
             if matches:
                 assessment, area = max(matches, key=lambda pair: pair[1])
                 if area > polygon.area * 0.5:
@@ -222,9 +235,10 @@ class CalgaryDataFetcher:
                     building['sources'].append('calgary_assessments')
             building['permits'] = [
                 {k: row.get(k) for k in ['permitnum', 'statuscurrent', 'description', 'applieddate', 'estprojectcost']}
-                for row in permits if (geo := self._geometry(row)) is not None and polygon.covers(geo)
+                for i in permit_tree.query(polygon, predicate='covers') for row in [permit_shapes[i][0]]
             ]
             if building['permits']:
                 building['sources'].append('calgary_permits')
         south, west, north, east = bounds or DEFAULT_BOUNDS
-        return [b for b in buildings if south <= b['latitude'] <= north and west <= b['longitude'] <= east][:limit]
+        viewport = box(west, south, east, north)
+        return [b for b in buildings if self._building_polygon(b).intersects(viewport)][:limit]

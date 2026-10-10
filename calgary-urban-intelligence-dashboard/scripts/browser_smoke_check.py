@@ -33,7 +33,7 @@ def main():
 
         page.get_by_label('Building question').fill('buildings over 100 feet')
         page.get_by_role('button', name='Search', exact=True).click()
-        page.wait_for_function("!document.querySelector('.map-loading')")
+        page.get_by_role('button', name='Search', exact=True).wait_for(state='visible')
         page.get_by_text('Height >=', exact=False).first.wait_for()
         result = page.locator('.map-heading > span').inner_text()
         page.screenshot(path=str(output / 'dashboard-filtered.png'), full_page=True)
@@ -82,7 +82,7 @@ def main():
         print('PASS: Mobile layout has no horizontal overflow.')
 
         # Deliberately simulate an upstream failure, then verify retry against the real API.
-        failure_page = browser.new_page()
+        failure_page = browser.new_page(viewport={'width': 1440, 'height': 1000})
         failure_page.on('pageerror', lambda error: errors.append(str(error)))
         failure_page.route('**/api/buildings/area*', lambda route: route.fulfill(
             status=502, content_type='application/json', body='{"error":"Test source outage"}'))
@@ -90,7 +90,7 @@ def main():
         failure_page.get_by_text('Test source outage', exact=False).wait_for()
         failure_page.unroute('**/api/buildings/area*')
         failure_page.get_by_role('button', name='Retry loading area').click()
-        failure_page.wait_for_function("!document.querySelector('.map-loading')")
+        failure_page.wait_for_function("!document.querySelector('.map-loading')", timeout=180000)
         assert failure_page.locator('.map-heading > span').inner_text() == total
         print('PASS: Visible error state and successful retry.')
         print('JavaScript errors:', errors, 'unexpected HTTP failures:', failures)

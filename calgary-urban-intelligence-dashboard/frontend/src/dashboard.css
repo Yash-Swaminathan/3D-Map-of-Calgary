@@ -56,3 +56,17 @@ button:disabled { opacity: .55; cursor: wait; }
 
 .header-actions .secondary-button { max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 @media (max-width: 760px) { .header-actions .secondary-button { max-width: calc(100% - 116px); } .header-actions .primary-button { flex-shrink: 0; } }
+
+.map-tools { flex-wrap: wrap; max-width: calc(100% - 30px); }
+.map-location { display: flex; gap: 6px; flex-wrap: wrap; }
+.map-location input { width: 150px; min-width: 0; padding: 8px; border: 1px solid #b9c9ce; border-radius: 6px; background: #fff; }
+.map-location [role="alert"] { font-size: 12px; color: #a33333; }
+.viewport-coordinates { font-size: 11px; color: #587078; margin: 0 24px 16px; }
+.overview-note { margin: 0 24px 18px; padding: 12px; background: #e8f1f4; font-size: 13px; line-height: 1.6; border-radius: 8px; }
+@media (max-width: 760px) { .map-tools { top: 92px; } .map-location { width: 100%; } }
+
+.overview-prompt { pointer-events: none; background: rgba(255,255,255,.94); padding: 20px; border-radius: 12px; }
+
+.map-heading { background: rgba(255,255,255,.94); padding: 14px 18px; border: 1px solid #dae2e6; border-radius: 9px; }
+.north-indicator { background: rgba(255,255,255,.94); padding: 8px; border-radius: 6px; }
+@media (max-width: 1100px) { .map-tools { top: 140px; } }

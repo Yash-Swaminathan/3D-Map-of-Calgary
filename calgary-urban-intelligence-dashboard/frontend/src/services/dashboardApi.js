@@ -13,8 +13,9 @@ client.interceptors.response.use(response => response, error => {
 
 export const apiService = {
   login: username => client.post('/users/login', { username }),
-  getBuildingsInArea: (bounds, refresh = false) =>
-    client.get('/buildings/area', { params: { bounds: bounds.join(','), refresh } }),
+  getBuildingsInArea: (bounds, refresh = false, options = {}) =>
+    client.get('/buildings/area', { signal: options.signal, params: { bounds: bounds.join(','), refresh, offset: options.offset || 0, version: options.version } }),
+  getCoverage: (bounds, signal) => client.get('/buildings/coverage', { signal, params: { bounds: bounds.join(',') } }),
   processQuery: (query, userId, bounds) =>
     client.post('/query/process', { query, user_id: userId, bounds }),
   filterBuildings: (filters, bounds) => client.post('/buildings/filter', { filters, bounds }),

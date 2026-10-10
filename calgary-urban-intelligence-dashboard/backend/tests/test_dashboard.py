@@ -162,5 +162,59 @@ class DashboardTests(unittest.TestCase):
             self.assertEqual(self.client.get(AREA + '&refresh=true').status_code, 502)
             self.assertEqual(len(self.client.get(AREA).get_json()['buildings']), 1)
 
+    def test_pagination_returns_more_than_500_without_refetching(self):
+        records = [sample(f'building-{i:04d}') for i in range(1205)]
+        with patch.object(CalgaryDataFetcher, 'fetch_combined_building_data', return_value=records) as fetch:
+            collected = []
+            offset = 0
+            version = None
+            while offset is not None:
+                response = self.client.get(AREA + f'&offset={offset}' + (f'&version={version}' if version else ''))
+                self.assertEqual(response.status_code, 200)
+                page = response.get_json()
+                collected.extend(page['buildings'])
+                offset = page['next_offset']
+                version = page['version']
+                self.assertEqual(page['total_count'], 1205)
+            self.assertEqual(len({b['building_id'] for b in collected}), 1205)
+            self.assertEqual(fetch.call_count, 1)
+            self.assertEqual(self.client.get(AREA + '&version=stale').status_code, 409)
+
+    def test_refresh_does_not_destroy_overlapping_area_membership(self):
+        other = '/api/buildings/area?bounds=51.044,-114.075,51.050,-114.065'
+        with patch.object(CalgaryDataFetcher, 'fetch_combined_building_data', return_value=[sample()]):
+            self.client.get(AREA)
+            self.client.get(other)
+        with patch.object(CalgaryDataFetcher, 'fetch_combined_building_data', return_value=[sample('new')]):
+            self.client.get(AREA + '&refresh=true')
+        self.assertEqual([b['building_id'] for b in self.client.get(other).get_json()['buildings']], ['test-1'])
+        self.assertEqual([b['building_id'] for b in self.client.get(AREA).get_json()['buildings']], ['new'])
+
+    def test_unlimited_source_pagination_uses_stable_order_and_offsets(self):
+        fetcher = CalgaryDataFetcher()
+        responses = []
+        for batch in [[{'id': i} for i in range(1000)], [{'id': i} for i in range(1000, 1407)]]:
+            response = Mock()
+            response.json.return_value = batch
+            responses.append(response)
+        with patch.object(fetcher.session, 'get', side_effect=responses) as get:
+            rows = fetcher.fetch_all_records('dataset', max_total_records=None)
+        self.assertEqual(len(rows), 1407)
+        self.assertEqual([call.kwargs['params']['$offset'] for call in get.call_args_list], [0, 1000])
+        self.assertTrue(all(call.kwargs['params']['$order'] == ':id' for call in get.call_args_list))
+
+    def test_combined_fetch_keeps_buildings_crossing_view_boundary(self):
+        fetcher = CalgaryDataFetcher()
+        crossing = sample(lat=51.04195)
+        with patch.object(fetcher, 'fetch_building_footprints', return_value=[crossing]), \
+             patch.object(fetcher, 'fetch_3d_buildings', return_value=[]), \
+             patch.object(fetcher, 'fetch_zoning_data', return_value=[]), \
+             patch.object(fetcher, 'fetch_property_assessments', return_value=[]), \
+             patch.object(fetcher, 'fetch_building_permits', return_value=[]):
+            crossing['sources'] = ['test']
+            crossing['permits'] = []
+            result = fetcher.fetch_combined_building_data(BOUNDS, include_osm=False)
+        self.assertEqual(len(result), 1)
+
 if __name__ == '__main__':
     unittest.main()

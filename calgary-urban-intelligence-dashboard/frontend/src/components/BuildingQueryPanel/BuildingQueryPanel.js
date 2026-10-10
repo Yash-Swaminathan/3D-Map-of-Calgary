@@ -237,7 +237,8 @@ function BuildingQueryPanel({
   onQuerySubmit, 
   onClearFilters, 
   activeFilters, 
-  isLoading, 
+  isLoading,
+  disabled = false,
   error, 
   buildingCount,
   totalBuildings 
@@ -263,13 +264,13 @@ function BuildingQueryPanel({
 
   const handleSubmit = (e) => {
     e.preventDefault();
-    if (query.trim() && !isLoading) {
+    if (query.trim() && !isLoading && !disabled) {
       onQuerySubmit(query.trim());
     }
   };
 
   const handleSuggestionClick = (suggestion) => {
-    if (isLoading) return;
+    if (isLoading || disabled) return;
     setQuery(suggestion);
     onQuerySubmit(suggestion);
   };
@@ -289,16 +290,16 @@ function BuildingQueryPanel({
             onChange={(e) => setQuery(e.target.value)}
             aria-label="Building question"
             placeholder="e.g. Commercial buildings over 30 meters"
-            disabled={isLoading}
+            disabled={isLoading || disabled}
           />
           <ButtonGroup>
-            <SubmitButton type="submit" disabled={isLoading || !query.trim()}>
+            <SubmitButton type="submit" disabled={isLoading || disabled || !query.trim()}>
               {isLoading ? 'Processing...' : 'Search'}
             </SubmitButton>
             <ClearButton 
               type="button" 
               onClick={handleClear}
-              disabled={isLoading}
+              disabled={isLoading || disabled}
             >
               Clear
             </ClearButton>
@@ -309,7 +310,7 @@ function BuildingQueryPanel({
       {isLoading && (
         <LoadingStatus>
           <Spinner />
-          Processing your query...
+          Loading area or processing query...
         </LoadingStatus>
       )}
 
@@ -338,7 +339,7 @@ function BuildingQueryPanel({
                 {category.examples.map((example, exampleIndex) => (
                   <SuggestionItem
                     type="button"
-                    disabled={isLoading}
+                    disabled={isLoading || disabled}
                     key={exampleIndex}
                     onClick={() => handleSuggestionClick(example)}
                   >

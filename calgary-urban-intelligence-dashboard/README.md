@@ -1,15 +1,15 @@
 # Calgary Urban Intelligence Dashboard
 
-Explore downtown Calgary in an interactive 3D map. Ask a plain-English question about height, building use, assessment value, or zoning; select a building to inspect its data; and save filters as a project.
+Explore Calgary in an interactive 3D map. Ask a plain-English question about height, building use, assessment value, or zoning; select a building to inspect its data; and save filters as a project.
 
 ## What works
 
-- React 18 and Three.js render vertically extruded footprints with meter coordinates and a fixed area origin. Filtering preserves positions.
+- React 18 and Three.js render vertically extruded footprints with meter coordinates and a stable coordinate origin. Filtering preserves positions.
 - Flask serves routes under /api on port 5001.
-- Five Calgary datasets and OpenStreetMap are fetched concurrently within geographic bounds and joined with Shapely. Missing sources produce visible coverage notes.
+- Five Calgary datasets are paginated completely within map-driven geographic tiles and joined with Shapely spatial indexes. OpenStreetMap enrichment is optional. Missing sources produce visible coverage notes.
 - Building use comes from Calgary roof-outline classifications, enriched with OpenStreetMap tags when available. Heights use Calgary rooftop/ground elevations or OSM height tags.
 - Supported natural-language filters use deterministic rules with feet-to-meter and CAD suffix conversions. Local Flan-T5 is optional.
-- SQLite stores buildings, provenance, exact-area caches, usernames, and saved filter sets. Projects reapply the same filters within the current study area.
+- SQLite stores buildings, provenance, versioned area caches with shared building membership, usernames, and saved filter sets. Projects reapply the same filters within the current study area.
 - The responsive UI includes coverage counts, loading/error/empty states, readable filters, building details, and project save/load/delete.
 
 Missing addresses, assessment values, and zoning remain unknown. Unknown-height meshes use a disclosed display placeholder that is not saved as a measurement. Assessment values belong to a matched property record and are not whole-building totals. Buildings can overlap multiple property records.
@@ -44,7 +44,15 @@ npm start
 
 For a separately hosted frontend, set REACT_APP_API_URL to the backend origin or its /api URL before building. Configure backend CORS_ORIGINS for that frontend origin.
 
-The default database is backend/instance/urban_dashboard.db. Existing building/project tables remain usable; new provenance/cache tables are created on startup. Areas are cached until refresh is requested. Refresh fetches first, then replaces that area's rows. A failed upstream fetch preserves the cache. DATABASE_URL can select another SQLAlchemy database.
+The default database is backend/instance/urban_dashboard.db. Existing building/project tables remain usable; new provenance/cache tables are created on startup. Areas are cached until refresh is requested. Refresh fetches first, then replaces that area's membership without deleting buildings belonging to neighbouring tiles. Legacy capped caches are bypassed automatically. A failed upstream fetch preserves the cache. DATABASE_URL can select another SQLAlchemy database.
+
+## Navigate the city
+
+Right-drag to pan, scroll to zoom, double-click the ground to explore that location, or enter latitude, longitude in the map's Go control. Reset view returns downtown; City overview zooms out across Calgary. The study-area coordinates update from camera/ground intersections, including after resizing. Active filters stay applied as new buildings arrive. Requests for an old view are cancelled and cannot replace a newer view. Loaded tiles are reused in memory and SQLite.
+
+No new API key, database reset, or manual bounds edit is needed. Restart the backend and frontend after pulling. New cache tables are created automatically. The first visit to an uncached area can take one to several minutes because assessment records require many upstream pages. Failures remain visible alongside partial results; Retry loading area retries unfinished tiles. Refresh data explicitly refreshes the visible tiles.
+
+OpenStreetMap is disabled for automatic map loading by default to avoid repeated Overpass delays. To enable additional OSM tags/footprints, set ENABLE_OSM_ENRICHMENT=true in backend/.env and restart, then refresh the view. City building outlines still load without OSM.
 
 ## Optional local model
 
@@ -81,13 +89,14 @@ Optional browser check with the app running:
 ~~~powershell
 pip install -r scripts/requirements-browser.txt
 python scripts/browser_smoke_check.py --url http://localhost:3006
+python scripts/viewport_smoke_check.py
 ~~~
 
 The browser check uses installed Chrome or Edge, exercises query/project/map/mobile workflows, and captures actual UI screenshots. Its temporary project is deleted after verification.
 
 ## Scope and remaining limits
 
-This is a local prototype. The UI uses a fixed downtown area. Fetches are capped at 500 buildings and 2,000 enrichment records per source; coverage can change when public APIs fail. Caches only refresh on request. Spatial matches do not establish legal parcel/building relationships; complex multipart buildings and multiple assessment records need deeper modeling. Username identification has no passwords or access control. The optional model path has not been validated end to end.
+This is a local prototype. The camera starts downtown, then pan/zoom loads the visible area anywhere in Calgary. All five sources paginate until exhausted; the area API sends 500-row pages with total_count, next_offset, and a snapshot version. The browser consumes every page and deduplicates shared footprints across tiles. Broad views covering more than 16 tiles show a live roof-record count; zoom in anywhere to render individual buildings. This avoids rendering hundreds of thousands of meshes at once. Coverage can change when public APIs fail. Caches only refresh on request. Spatial matches do not establish legal parcel/building relationships; complex multipart buildings and multiple assessment records need deeper modeling. Username identification has no passwords or access control. The optional model path has not been validated end to end.
 
 ## Layout and documentation
 

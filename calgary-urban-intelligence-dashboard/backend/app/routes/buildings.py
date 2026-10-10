@@ -6,48 +6,64 @@ from app.services.building_processor import BuildingProcessor
 from app.models.building import Building
 from app.utils.validation import validate_bounds, validate_filters
 
+from threading import RLock
+cache_write_lock = RLock()
+
 buildings_bp = Blueprint('buildings', __name__)
 
 @buildings_bp.route('/area', methods=['GET'])
 def get_buildings_in_area():
-    """Fetch/cache the requested area rather than checking whether any city data exists."""
+    """Cache complete source results; deliver every building through stable pages."""
     import json
     from datetime import datetime
-    from app import db
-    from app.models.building import CachedArea
+    from app.models.building import AreaSnapshot, AreaBuilding
     try:
         bounds = validate_bounds(request.args.get('bounds'))
-        refresh = request.args.get('refresh', 'false').lower() == 'true'
+        offset = int(request.args.get('offset', 0))
+        page_size = int(request.args.get('page_size', 500))
+        if offset < 0 or not 1 <= page_size <= 2000:
+            raise ValueError('Use offset >= 0 and page_size between 1 and 2000.')
+        refresh = request.args.get('refresh', 'false').lower() == 'true' and offset == 0
         key = ','.join(str(v) for v in bounds)
-        area = db.session.get(CachedArea, key)
+        area = db.session.get(AreaSnapshot, key)
         processor = BuildingProcessor()
         fresh = refresh or area is None
         if fresh:
             fetcher = CalgaryDataFetcher()
-            raw_data = fetcher.fetch_combined_building_data(bounds=bounds)
+            raw_data = fetcher.fetch_combined_building_data(
+                bounds=bounds, include_osm=current_app.config.get('ENABLE_OSM_ENRICHMENT', False))
             if not raw_data and fetcher.warnings:
                 return jsonify({'error': 'Building sources are unavailable. Try again shortly.',
                                 'warnings': fetcher.warnings}), 502
-            # Replace this area's rows only after an upstream fetch succeeds.
-            for old_building in processor.get_buildings_in_bounds(bounds):
-                db.session.delete(old_building)
-            db.session.flush()
-            stored = processor.process_and_store_buildings(raw_data)
-            if raw_data and not stored:
-                return jsonify({'error': 'Could not store the fetched buildings.'}), 500
-            if area is None:
-                area = CachedArea(bounds_key=key)
-                db.session.add(area)
-            area.fetched_at = datetime.utcnow()
-            area.warnings_json = json.dumps(fetcher.warnings)
-            db.session.commit()
-        buildings = processor.get_buildings_in_bounds(bounds)
+            with cache_write_lock:
+                area = db.session.get(AreaSnapshot, key, populate_existing=True)
+                stored = processor.process_and_store_buildings(raw_data, commit=False)
+                if raw_data and not stored:
+                    return jsonify({'error': 'Could not store the fetched buildings.'}), 500
+                if area is None:
+                    area = AreaSnapshot(bounds_key=key)
+                    db.session.add(area)
+                # Membership changes affect only this area; shared building rows survive.
+                area.members.clear()
+                db.session.flush()
+                area.members = [AreaBuilding(building_id=b.id) for b in stored]
+                area.fetched_at = datetime.utcnow()
+                area.warnings_json = json.dumps(fetcher.warnings)
+                db.session.commit()
+        version = area.fetched_at.isoformat()
+        if request.args.get('version') and request.args['version'] != version:
+            return jsonify({'error': 'Area changed during pagination; restart loading.'}), 409
+        query = Building.query.join(AreaBuilding).filter(AreaBuilding.bounds_key == key)
+        total = query.count()
+        buildings = query.order_by(Building.building_id).offset(offset).limit(page_size).all()
+        next_offset = offset + len(buildings)
         return jsonify({
             'success': True, 'buildings': [b.to_dict() for b in buildings],
-            'statistics': processor.get_building_statistics(buildings), 'bounds': bounds,
-            'data_source': 'calgary_open_data_and_openstreetmap',
-            'cache_status': 'fresh' if fresh else 'cached',
-            'fetched_at': area.fetched_at.isoformat(), 'warnings': json.loads(area.warnings_json),
+            'bounds': bounds, 'total_count': total,
+            'next_offset': next_offset if next_offset < total else None,
+            'cache_status': 'fresh' if fresh else 'cached', 'version': version,
+            'fetched_at': version, 'warnings': json.loads(area.warnings_json),
+            'coverage_complete': not bool(json.loads(area.warnings_json)),
         })
     except ValueError as error:
         return jsonify({'error': str(error)}), 400
@@ -55,6 +71,28 @@ def get_buildings_in_area():
         db.session.rollback()
         current_app.logger.exception('Building area request failed')
         return jsonify({'error': 'Could not load this area.'}), 500
+
+
+@buildings_bp.route('/coverage', methods=['GET'])
+def get_coverage():
+    """Count live roof records for broad views without sending citywide meshes."""
+    import math
+    try:
+        values = request.args.get('bounds', '').split(',')
+        south, west, north, east = (float(v) for v in values)
+        if not all(math.isfinite(v) for v in [south, west, north, east]) or not (
+                -90 <= south < north <= 90 and -180 <= west < east <= 180):
+            raise ValueError('Invalid coverage bounds.')
+        fetcher = CalgaryDataFetcher()
+        polygon = f'POLYGON(({west} {south},{east} {south},{east} {north},{west} {north},{west} {south}))'
+        response = fetcher.session.get(f'{fetcher.base_url}/uc4c-6kbd.json', params={
+            '$select': 'count(*) AS count', '$where': f"intersects(multipolygon, '{polygon}')"}, timeout=20)
+        response.raise_for_status()
+        return jsonify({'success': True, 'source_record_count': int(response.json()[0]['count'])})
+    except (ValueError, TypeError):
+        return jsonify({'error': 'Invalid coverage bounds.'}), 400
+    except Exception:
+        return jsonify({'error': 'Could not count roof records for this view.'}), 502
 
 @buildings_bp.route('/<int:building_id>', methods=['GET'])
 def get_building_details(building_id):
